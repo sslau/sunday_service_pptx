@@ -85,6 +85,7 @@ IMAGE_SLIDES = {
     "apostles_creed": os.path.join("media", "apostles_creed.jpg"),
     "scripture_header": os.path.join("media", "scripture_reading.jpg"),
     "sermon_header": os.path.join("media", "sermon.jpg"),
+    "response_header": os.path.join("media", "response_hymn.jpg"),
     "doxology": os.path.join("media", "doxology.jpg"),
     "benediction": os.path.join("media", "benediction.jpg"),
     "announce_header": os.path.join("media", "announcements.jpg"),
@@ -985,6 +986,24 @@ def build_hymns_section(pres, cfg, hymns):
             add_verse(refrain)
 
 
+def build_response_section(pres, cfg):
+    """詩歌回應：單首回應詩歌（標題卡 + 各段歌詞 + 副歌），緊接信息之後。
+    無上載流程，一律由內容現場編譯；背景沿用詩歌背景圖。"""
+    response = cfg.get("response") or {}
+    if not (response.get("title") or response.get("verses")):
+        return 0
+    build_hymns_section(pres, cfg, [{
+        "title": response.get("title", ""),
+        "subtitle": response.get("subtitle", ""),
+        "source": response.get("source", ""),
+        "refrain": response.get("refrain"),
+        "refrain_after_every_verse": response.get(
+            "refrain_after_every_verse", True),
+        "verses": response.get("verses", []),
+    }])
+    return _response_slide_count(cfg)
+
+
 def build_sermon_section(pres, cfg, sermon):
     """講道信息：亮金色過場 + 題目頁（題目/副題/經文/講員/日期）+ 內容頁。"""
     margin, box_w, typeface = _section_geometry(cfg, pres)
@@ -1025,7 +1044,7 @@ def build_sermon_section(pres, cfg, sermon):
 
 
 def build_announcements_section(pres, cfg, announcements):
-    """公佈事項：圖片或文字（標題 + 內容）。"""
+    """家事分享：圖片或文字（標題 + 內容）。"""
     margin, box_w, typeface = _section_geometry(cfg, pres)
     for a in announcements:
         if a.get("image"):
@@ -1051,9 +1070,24 @@ def _sermon_slide_count(cfg):
     return n
 
 
+def _response_slide_count(cfg):
+    """Slides 詩歌回應 content contributes (title card + verses/refrains; no
+    header), 0 when the section is empty."""
+    response = cfg.get("response") or {}
+    if not (response.get("title") or response.get("verses")):
+        return 0
+    verses = response.get("verses") or []
+    n = 1                             # title card
+    if response.get("refrain"):
+        n += len(verses) if response.get(
+            "refrain_after_every_verse", True) and verses else 1
+    n += len(verses)
+    return n
+
+
 def build_section_deck(section, cfg, template=None):
     """Compile one section as its own standalone 16:9 deck:
-    section = "hymns" | "sermon" | "announcements" | "scripture".  The result
+    section = "hymns" | "sermon" | "announcements" | "scripture" | "response".  The result
     is exactly what build() would insert between the fixed header slides, so
     the section deck can be handed to someone else and merged by uploading it.
     ``scripture`` is a separate workflow: verse slides only (讀經), no service
@@ -1077,6 +1111,8 @@ def build_section_deck(section, cfg, template=None):
                                         or cfg.get("scripture_font_size", 44))),
                             sc.get("ref_size", 48), typeface,
                             whole_verses=True)
+    elif section == "response":
+        build_response_section(pres, cfg)
     else:
         raise ValueError("unknown section: %r (use hymns|sermon|"
                          "announcements|scripture)" % section)
@@ -1088,6 +1124,8 @@ def build(pres, cfg):
     songs_path = None      # external songs pptx (songs_import), if used
     sermons_path = None    # external sermon pptx (sermon_import), if used
     announcements_path = None  # external announcements pptx, if used
+    offering_path = None   # external offering pptx (offering_import), if used
+    response_path = None   # external response pptx (response_import), if used
 
     def image_path(name):
         val = cfg.get(name)
@@ -1156,6 +1194,19 @@ def build(pres, cfg):
     add_image("prayer_header")
     add_image("lords_prayer")
 
+    # 獻詩（緊接禱告之後；上載的 pptx 原封不動合併，可選）
+    if cfg.get("offering_import"):
+        offering_path = locate_offering_file(cfg)
+        if offering_path:
+            try:
+                import_deck(pres, offering_path, "offering")
+            except Exception as exc:
+                print("warning: could not import %s (%s)" % (offering_path, exc))
+                offering_path = None
+        if not offering_path:
+            print("warning: offering pptx not found (%s), skipping"
+                  % cfg.get("offering_file", "offering_*.pptx"))
+
     # 讀經 header + scripture verses（fresh reading slides）
     add_image("scripture_header")
     if scripture.get("verses"):
@@ -1183,6 +1234,27 @@ def build(pres, cfg):
                   % cfg.get("sermon_file", "sermon_*.pptx"))
     if not sermons_path:
         build_sermon_section(pres, cfg, sermon)
+
+    # 詩歌回應（緊接信息之後、聖餐之前；上載的 pptx 以檔案為準，否則由內容編譯）
+    response_has_content = bool(cfg.get("response", {}).get("title") or
+                                cfg.get("response", {}).get("verses"))
+    if cfg.get("response_import"):
+        response_path = locate_response_file(cfg)
+        if response_path:
+            try:
+                if response_has_content:
+                    add_image("response_header")
+                import_deck(pres, response_path, "response")
+            except Exception as exc:
+                print("warning: could not import %s (%s)" % (response_path, exc))
+                response_path = None
+        if not response_path:
+            print("warning: response pptx not found (%s), generating from config"
+                  % cfg.get("response_file", "response_*.pptx"))
+    elif response_has_content:
+        add_image("response_header")
+    if not response_path and response_has_content:
+        build_response_section(pres, cfg)
 
     # 聖餐、使徒信經（first Sunday only）
     if cfg.get("communion"):
@@ -1216,7 +1288,7 @@ def build(pres, cfg):
     if not announcements_path:
         build_announcements_section(pres, cfg, announcements)
 
-    # 結束（最後一頁，接在公佈事項之後）
+    # 結束（最後一頁，接在家事分享之後）
     add_image("closing")
 
 
@@ -1233,6 +1305,13 @@ def plan(cfg):
     count += 1                         # worship header
     count += _hymn_slide_count(cfg)    # hymns（或匯入 songs_slides pptx）
     count += 2                         # prayer header + lordsprayer
+    if cfg.get("offering_import"):
+        path = locate_offering_file(cfg)
+        if path:
+            try:
+                count += len(Presentation(path).slides._sldIdLst)
+            except Exception:
+                pass
     count += 1                         # scripture header
     scripture = cfg.get("scripture", {})
     if scripture.get("verses"):
@@ -1253,6 +1332,21 @@ def plan(cfg):
             count += _sermon_slide_count(cfg)
     else:
         count += _sermon_slide_count(cfg)
+    response_has_content = bool(cfg.get("response", {}).get("title") or
+                                cfg.get("response", {}).get("verses"))
+    if response_has_content:
+        count += 1                         # response header
+    if cfg.get("response_import"):
+        path = locate_response_file(cfg)
+        if path:
+            try:
+                count += len(Presentation(path).slides._sldIdLst)
+            except Exception:
+                count += _response_slide_count(cfg)
+        else:
+            count += _response_slide_count(cfg)
+    else:
+        count += _response_slide_count(cfg)
     if cfg.get("communion"):
         count += 2                         # communion + apostles creed
     count += 1                         # announce header（announcements）
@@ -1341,6 +1435,20 @@ def locate_announcements_file(cfg):
     return _locate_pptx(cfg, "announcements_file",
                         "announcements_%s.pptx" % date if date else "announcements.pptx",
                         "announcements")
+
+
+def locate_offering_file(cfg):
+    date = cfg.get("date", "")
+    return _locate_pptx(cfg, "offering_file",
+                        "offering_%s.pptx" % date if date else "offering.pptx",
+                        "offering")
+
+
+def locate_response_file(cfg):
+    date = cfg.get("date", "")
+    return _locate_pptx(cfg, "response_file",
+                        "response_%s.pptx" % date if date else "response.pptx",
+                        "response")
 
 
 def import_deck(pres, path, label):

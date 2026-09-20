@@ -26,12 +26,16 @@ SECTION_FILENAMES = {
     "songs": "songs_slides_{date}.pptx",
     "sermon": "sermon_{date}.pptx",
     "announcements": "announcements_{date}.pptx",
+    "offering": "offering_{date}.pptx",
+    "response": "response_{date}.pptx",
 }
 # section -> (import flag, file key) read by generate_deck.build
 SECTION_CFG = {
     "songs": ("songs_import", "songs_file"),
     "sermon": ("sermon_import", "sermon_file"),
     "announcements": ("announcements_import", "announcements_file"),
+    "offering": ("offering_import", "offering_file"),
+    "response": ("response_import", "response_file"),
 }
 
 
@@ -59,6 +63,16 @@ def save_section_deck(section, date, data):
     with open(path, "wb") as fh:
         fh.write(data)
     return path
+
+
+def clear_section_deck(section, date):
+    """Delete a previously saved section deck (if any). Used to undo an
+    accidental upload/persist. Returns True when a file was removed."""
+    path = saved_section_path(section, date)
+    if path:
+        os.remove(path)
+        return True
+    return False
 
 # Header/image slots the generator resolves from the config (keys are the
 # exact names generate_deck.build reads).  Exposed as optional build-time
@@ -125,12 +139,15 @@ def _set_pptx(cfg, flag_key, file_key, upload):
 
 
 def _config(week, songs_pptx, announcements_pptx, sermon_pptx,
-            image_overrides, announcement_images, use_saved=True):
+            image_overrides, announcement_images, use_saved=True,
+            offering_pptx=None, response_pptx=None):
     cfg = copy.deepcopy(week)
     _set_pptx(cfg, "songs_import", "songs_file", songs_pptx)
     _set_pptx(cfg, "announcements_import", "announcements_file",
               announcements_pptx)
     _set_pptx(cfg, "sermon_import", "sermon_file", sermon_pptx)
+    _set_pptx(cfg, "offering_import", "offering_file", offering_pptx)
+    _set_pptx(cfg, "response_import", "response_file", response_pptx)
     if use_saved:
         date = cfg.get("date")
         for section, (flag, fkey) in SECTION_CFG.items():
@@ -151,16 +168,18 @@ def _config(week, songs_pptx, announcements_pptx, sermon_pptx,
 
 def build_deck(week, songs_pptx=None, announcements_pptx=None,
                sermon_pptx=None, image_overrides=None,
-               announcement_images=None, use_saved=True):
+               announcement_images=None, use_saved=True, offering_pptx=None,
+               response_pptx=None):
     """Build the full deck for `week`; returns (pptx_bytes, slide_count).
-    Any of the three section decks (songs/sermon/announcements) may be given
-    as an UploadedFile *or* a filename/hint string resolved via
-    resolve_deck_path(); each is merged in place of web-compiled content.
-    With `use_saved`, sections not given explicitly fall back to a deck saved
-    earlier for this date (data/decks/<date>/)."""
+    songs/sermon/announcements/offering/response decks may be given as
+    UploadedFile *or* a filename/hint string resolved via resolve_deck_path();
+    each is merged in place of web-compiled content.  With `use_saved`,
+    sections not given explicitly fall back to a deck saved earlier for this
+    date (data/decks/<date>/)."""
     os.chdir(HERE)  # generator resolves media/ fallbacks relative to cwd
     cfg = _config(week, songs_pptx, announcements_pptx, sermon_pptx,
-                  image_overrides, announcement_images, use_saved)
+                  image_overrides, announcement_images, use_saved,
+                  offering_pptx, response_pptx)
     pres = Presentation(TEMPLATE)
     build(pres, cfg)
     buf = io.BytesIO()
@@ -169,11 +188,12 @@ def build_deck(week, songs_pptx=None, announcements_pptx=None,
 
 
 def count_deck(week, songs_pptx=None, announcements_pptx=None,
-               sermon_pptx=None, use_saved=True):
+               sermon_pptx=None, use_saved=True, offering_pptx=None,
+               response_pptx=None):
     """Slide count the generator would produce (no build)."""
     os.chdir(HERE)
     cfg = _config(week, songs_pptx, announcements_pptx, sermon_pptx, {}, {},
-                  use_saved)
+                  use_saved, offering_pptx, response_pptx)
     return plan(cfg)
 
 

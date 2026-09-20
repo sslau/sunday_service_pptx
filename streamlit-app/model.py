@@ -11,6 +11,8 @@
                   verses[ [line...], ... ]} ],
       "scripture":    {ref, ref_size, font_size, max_lines, verses[]},
       "sermon":       {title, title_2, scripture, ref_size, speaker, date, slides[]},
+      "response":     {title, subtitle, source, refrain[], refrain_after_every_verse,
+                       verses[ [line...], ... ]},   # 詩歌回應（單首）
       "announcements":[ {title, body[], image, image_name} ],
       "communion":    false,
     }
@@ -41,6 +43,7 @@ def default_week(date):
     week = copy.deepcopy(_default)
     week["date"] = date
     week.setdefault("sermon", {})
+    week.setdefault("response", {})
     week.setdefault("announcements", [])
     week.setdefault("communion", False)
     return week
@@ -117,6 +120,19 @@ def normalize_week(w):
         })
     sermon["slides"] = slides
     w["sermon"] = sermon
+
+    response = dict(w.get("response") or {})
+    response["title"] = str(response.get("title") or "")
+    response["subtitle"] = str(response.get("subtitle") or "")
+    response["source"] = str(response.get("source") or "")
+    response["refrain"] = [str(x) for x in (response.get("refrain") or [])
+                           if str(x).strip()] or None
+    response["refrain_after_every_verse"] = bool(
+        response.get("refrain_after_every_verse", True))
+    response["verses"] = [[str(x) for x in stanza if str(x).strip()]
+                          for stanza in (response.get("verses") or [])]
+    response["verses"] = [s for s in response["verses"] if s]
+    w["response"] = response
 
     announcements = []
     for a in (w.get("announcements") or []):
