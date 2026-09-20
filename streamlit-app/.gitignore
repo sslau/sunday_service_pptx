@@ -1,0 +1,17 @@
+# Secrets — never commit these
+.streamlit/secrets.toml
+**/secrets.toml
+*service-account*.json
+*-key.json
+gcp*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local runtime data (content lives in Google Sheets; these are wiped on Cloud)
+data/weeks.json
+data/decks/
+data/downloads/
