@@ -621,6 +621,23 @@ with st.sidebar:
                 '<span class="brand-tail"> 編輯器</span></div>',
                 unsafe_allow_html=True)
 
+    # 新增週次 handled BEFORE the date dropdown renders: the fresh week must
+    # already exist in the store, otherwise the dropdown (built from existing
+    # dates only) immediately reverts to an older date and the new week is
+    # never opened.
+    with st.expander("＋ 新增週次"):
+        new_date = st.text_input("日期（YYYY.MM.DD）",
+                                 placeholder="2026.10.04", key=K("new_week_date"))
+        if st.button("新增並開啟", use_container_width=True,
+                     key=K("new_week_add")):
+            if DATE_RE.match(new_date):
+                if new_date not in store.all().keys():
+                    store.save(default_week(new_date))
+                    st.cache_data.clear()
+                set_active(new_date)
+            else:
+                st.error("日期格式應為 2026.09.20")
+
     dates = sorted(store.all().keys(), reverse=True)
     idx = dates.index(DATE) if DATE in dates else 0
     picked = st.selectbox("主日日期", dates or ["2026.09.20"],
@@ -652,18 +669,6 @@ with st.sidebar:
                             use_container_width=True,
                             key=K("generate_scripture"))
     scr_slot = st.container()
-
-    with st.expander("＋ 新增週次"):
-        new_date = st.text_input("日期（YYYY.MM.DD）",
-                                 placeholder="2026.10.04", key=K("new_week_date"))
-        if st.button("新增並開啟", use_container_width=True,
-                     key=K("new_week_add")):
-            if DATE_RE.match(new_date):
-                if new_date not in (dates or []):
-                    st.cache_data.clear()
-                set_active(new_date)
-            else:
-                st.error("日期格式應為 2026.09.20")
 
 # ------------------------------------------------------------------ tabs --
 tab_edit, tab_build = st.tabs(["✏️ 編輯內容", "📽 製作成投影片"])
@@ -912,7 +917,7 @@ with tab_edit:
     st.divider()
     _step_nav(step)
     if step >= len(EDIT_STEPS):
-        st.success("**全部步驟已完成 ✔**　下一步：請在瀏覽器上方的頁籤切換到 "
+        st.success("全部步驟已完成 ✔　下一步：請在瀏覽器上方的頁籤切換到 "
                    "「📽 製作成投影片」，上載要合併的 pptx 檔案；"
                    "或直接在左側面板按「📽 製成整場投影片」。")
 
