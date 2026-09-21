@@ -4,7 +4,7 @@
     {
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
-      "hymn_font_size": 44,
+      "hymn_font_max": 54,   # lyrics auto-fit ceiling (goes big up to this)
       "hymn_font_min":  36,
       "hymn_margin_in": 0.83,
       "hymns": [ {title, subtitle, source, refrain[], refrain_after_every_verse,
@@ -59,6 +59,23 @@ def split_lines(text):
     return out
 
 
+def _stanza_lines(stanza):
+    """One stanza -> list of lines, forgivingly.
+
+    Handles the shapes that reach the sheet: a list of lines, a single
+    newline-joined string (split it back), or — legacy damage — a flat list
+    of single characters that was produced by iterating a string (re-join
+    them into one line so the lyrics are recoverable)."""
+    if isinstance(stanza, str):
+        return split_lines(stanza)
+    if not stanza:
+        return []
+    items = [str(x) for x in stanza if str(x).strip()]
+    if len(items) > 1 and all(len(i) == 1 for i in items):
+        return "".join(items).strip().split() or [""]
+    return items
+
+
 def _num(value, default):
     try:
         n = int(round(float(value)))
@@ -78,9 +95,10 @@ def normalize_week(w):
     psalm["verses"] = [str(v) for v in (psalm.get("verses") or []) if str(v).strip()]
     w["psalm"] = psalm
 
-    w["hymn_font_size"] = _num(w.get("hymn_font_size"), 44)
+    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 54)
     w["hymn_font_min"] = _num(w.get("hymn_font_min"), 36)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
+    w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))
 
     hymns = []
     for h in (w.get("hymns") or []):
@@ -89,9 +107,10 @@ def normalize_week(w):
             "title": str(h.get("title") or ""),
             "subtitle": str(h.get("subtitle") or ""),
             "source": str(h.get("source") or ""),
-            "refrain": [str(x) for x in (h.get("refrain") or []) if str(x).strip()] or None,
+            "bg": str(h.get("bg") or ""),
+            "refrain": (_stanza_lines(h.get("refrain")) or None),
             "refrain_after_every_verse": bool(h.get("refrain_after_every_verse", True)),
-            "verses": [[str(x) for x in stanza if str(x).strip()]
+            "verses": [_stanza_lines(stanza)
                        for stanza in (h.get("verses") or [])],
         }
         hymn["verses"] = [s for s in hymn["verses"] if s]
@@ -125,11 +144,10 @@ def normalize_week(w):
     response["title"] = str(response.get("title") or "")
     response["subtitle"] = str(response.get("subtitle") or "")
     response["source"] = str(response.get("source") or "")
-    response["refrain"] = [str(x) for x in (response.get("refrain") or [])
-                           if str(x).strip()] or None
+    response["refrain"] = _stanza_lines(response.get("refrain")) or None
     response["refrain_after_every_verse"] = bool(
         response.get("refrain_after_every_verse", True))
-    response["verses"] = [[str(x) for x in stanza if str(x).strip()]
+    response["verses"] = [_stanza_lines(stanza)
                           for stanza in (response.get("verses") or [])]
     response["verses"] = [s for s in response["verses"] if s]
     w["response"] = response

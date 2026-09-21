@@ -15,3 +15,5 @@ venv/
 data/weeks.json
 data/decks/
 data/downloads/
+
+.DS_Store

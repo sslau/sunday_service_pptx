@@ -55,8 +55,58 @@ def K(name):
     return f"{P}{name}"
 
 
+# --- 登入門（簡單密碼鎖）----------------------------------------------------
+# 密碼放在 `.streamlit/secrets.toml` 的 `app_password`（被 .gitignore 排除，
+# 部署時請在 Streamlit Cloud 的 Settings → Secrets 貼上同一欄位）。
+# 沒有設定 app_password 時會放行，但顯示黃色提醒。
+
+try:
+    APP_PASSWORD = st.secrets.get("app_password") or None
+except Exception:
+    APP_PASSWORD = None
+
+
+def _auth_ok():
+    return bool(st.session_state.get("auth_ok", False))
+
+
+if not _auth_ok():
+    with st.container(border=True):
+        st.subheader("🔒 崇拜投影片編輯器 — 請登入")
+        pw = st.text_input("密碼", type="password", key=K("gate_password"),
+                           placeholder="請輸入密碼")
+        if st.button("登入", type="primary", key=K("gate_login")):
+            if APP_PASSWORD is None:
+                st.warning("尚未設定 app_password（在 Settings → Secrets）。"
+                           "未設定密碼前先放行。")
+                st.session_state["auth_ok"] = True
+                st.rerun()
+            elif pw == APP_PASSWORD:
+                st.session_state["auth_ok"] = True
+                st.rerun()
+            else:
+                st.error("密碼錯誤，請重試。")
+    st.stop()
+
+
 def sv(name, default=""):
     return st.session_state.get(K(name), default)
+
+
+def song_bg_files():
+    """media/song_bg*.jpg relative paths, sorted numerically (bg1<bg2<…)."""
+    import glob
+    files = sorted(glob.glob(os.path.join(os.getcwd(), "media", "song_bg*.jpg")))
+    return [os.path.relpath(f, os.getcwd()) for f in files]
+
+
+def song_bg_options(current):
+    """Selectbox choices: default '依序' plus each media background; the
+    current value is always present so saved choices never go missing."""
+    opts = [""] + song_bg_files()
+    if current not in opts:
+        opts.append(current)
+    return opts
 
 
 def section_source(upload, name, section, date, use_saved):
@@ -128,7 +178,7 @@ def clear_date_state(date):
 
 def set_active(date, seed_week=None):
     clear_date_state(date)
-    week = seed_week or store.get(date) or default_week(date)
+    week = normalize_week(seed_week or store.get(date) or default_week(date))
     st.session_state["active_date"] = date
     st.session_state[f"{date}::ui_hymns"] = _seed_hymns(week)
     st.session_state[f"{date}::ui_slides"] = _seed_slides(week)
@@ -146,6 +196,7 @@ def _seed_hymns(week):
             "title": h.get("title", ""),
             "subtitle": h.get("subtitle", ""),
             "source": h.get("source", ""),
+            "bg": h.get("bg", ""),
             "refrain": "\n".join(h.get("refrain") or []),
             "repeat": bool(h.get("refrain_after_every_verse", True)),
             "stanzas": ["\n".join(s) for s in h.get("verses", [])] or [""],
@@ -186,9 +237,10 @@ def _seed_fields(date, week):
         "psalm_ref_size": psalm.get("ref_size", 48),
         "psalm_font_size": psalm.get("font_size", 44),
         "psalm_verses": "\n".join(psalm.get("verses") or []),
-        "hymn_font_size": week.get("hymn_font_size", 44),
+        "hymn_font_max": week.get("hymn_font_max", 54),
         "hymn_font_min": week.get("hymn_font_min", 36),
         "hymn_margin_in": week.get("hymn_margin_in", 0.83),
+        "hymn_text_shadow": bool(week.get("hymn_text_shadow", True)),
         "scripture_ref": scripture.get("ref", ""),
         "scripture_ref_size": scripture.get("ref_size", 48),
         "scripture_font_size": scripture.get("font_size", 44),
@@ -222,7 +274,7 @@ def _seed_response_fields(date, week):
 
 
 if f"{DATE}::ui_hymns" not in st.session_state:
-    week = store.get(DATE) or default_week(DATE)
+    week = normalize_week(store.get(DATE) or default_week(DATE))
     st.session_state[f"{DATE}::ui_hymns"] = _seed_hymns(week)
     st.session_state[f"{DATE}::ui_slides"] = _seed_slides(week)
     st.session_state[f"{DATE}::ui_ann"] = _seed_ann(week)
@@ -237,10 +289,11 @@ if f"{DATE}::ui_hymns" not in st.session_state:
         st.session_state[base + "title"] = h.get("title", "")
         st.session_state[base + "subtitle"] = h.get("subtitle", "")
         st.session_state[base + "source"] = h.get("source", "")
-        st.session_state[base + "refrain"] = "\n".join(h.get("refrain") or [])
+        st.session_state[base + "bg"] = h.get("bg", "")
+        st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
         for j, stanza in enumerate(h.get("stanzas", [])):
-            st.session_state[f"{base}verses_{j}"] = "\n".join(stanza)
+            st.session_state[f"{base}verses_{j}"] = stanza
 
 
 # ── clear-upload signals ────────────────────────────────────────────────────
@@ -304,9 +357,10 @@ def assemble_week(date):
             "font_size": int(gv("psalm_font_size", 44)),
             "verses": split_lines(gv("psalm_verses", "")),
         },
-        "hymn_font_size": int(gv("hymn_font_size", 44)),
+        "hymn_font_max": int(gv("hymn_font_max", 54)),
         "hymn_font_min": int(gv("hymn_font_min", 36)),
         "hymn_margin_in": float(gv("hymn_margin_in", 0.83)),
+        "hymn_text_shadow": bool(gv("hymn_text_shadow", True)),
         "hymns": [assemble_hymn(date, h) for h in ui_hymns],
         "scripture": {
             "ref": gv("scripture_ref", ""),
@@ -353,6 +407,7 @@ def assemble_hymn(date, ui):
         "title": st.session_state.get(base + "title", ui.get("title", "")),
         "subtitle": st.session_state.get(base + "subtitle", ui.get("subtitle", "")),
         "source": st.session_state.get(base + "source", ui.get("source", "")),
+        "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
         "refrain": split_lines(refrain) or None,
         "refrain_after_every_verse": bool(
             st.session_state.get(base + "repeat", ui.get("repeat", True))),
@@ -446,8 +501,11 @@ def section_header(num, title, subtitle=""):
         unsafe_allow_html=True)
 
 
-def _fetch_into(ref_key, target_key):
-    """Button callback: fetch 出處 from bible.fhl.net into the verse text box."""
+def _fetch_into(ref_key, target_key, section=None):
+    """Button callback: fetch 出處 from bible.fhl.net into the verse text box.
+    With `section` ("psalm"|"scripture"), also saves the fetched content to
+    the store immediately so it survives an app restart without an extra
+    儲存目前內容 click."""
     info_key, err_key = target_key + "__info", target_key + "__err"
     ref = (st.session_state.get(ref_key) or "").strip()
     if not ref:
@@ -463,6 +521,19 @@ def _fetch_into(ref_key, target_key):
     st.session_state[target_key] = text
     st.session_state[err_key] = ""
     st.session_state[info_key] = f"已從聖經網載入：{info}"
+    if section:
+        try:
+            week = normalize_week(store.get(DATE) or default_week(DATE))
+            cur = dict(week.get(section) or {})
+            cur["ref"] = ref
+            cur["verses"] = split_lines(text)
+            week[section] = cur
+            store.save(week)
+            st.cache_data.clear()
+        except Exception as exc:
+            st.session_state[err_key] = (
+                f"已載入，但儲存到試算表失敗：{exc}；請另按「儲存目前內容」")
+            st.session_state[info_key] = ""
 
 
 def _pick_book(select_key, ref_key):
@@ -489,10 +560,10 @@ def _fetch_status(name):
 
 # Wizard steps for the 編輯內容 tab — filled top to bottom, one at a time.
 EDIT_STEPS = [
-    ("宣召經文", "宣召"),
+    ("宣召經文", "宣召經文"),
     ("詩歌敬拜（Hymns）", "詩歌"),
     ("獻詩（Offering）", "獻詩"),
-    ("經文（讀經）", "讀經"),
+    ("讀經經文", "讀經"),
     ("講道信息（Sermon）", "講道"),
     ("詩歌回應（Response Hymn）", "詩歌回應"),
     ("聖餐（Communion）", "聖餐"),
@@ -621,8 +692,9 @@ with tab_edit:
                                  args=(K("psalm_book"), K("psalm_ref")))
             ref_row[2].button("⬇️", type="primary", key=K("psalm_load"),
                               on_click=_fetch_into,
-                              args=(K("psalm_ref"), K("psalm_verses")),
-                              help="點一下即從 fhl.net 聖經網載入整段經文")
+                              args=(K("psalm_ref"), K("psalm_verses"),
+                                    "psalm"),
+                              help="點一下即從 fhl.net 聖經網載入整段經文（並自動儲存）")
             ref_row[3].caption("一鍵從聖經網載入經文")
             st.caption("支援多卷書：以 `；` 分隔（如 詩篇 34:1-3；馬太福音 6:9-13）")
             c1, c2 = st.columns(2)
@@ -642,13 +714,19 @@ with tab_edit:
             st.caption(ready or "如已有現成的詩歌 .pptx，也可在「📽 製作成投影片」頁"
                        "上載合併（該節以檔案為準，字型／項目符號沿用來源檔）。")
             c1, c2, c3 = st.columns(3)
-            c1.number_input("歌詞字體(pt)", value=44, min_value=20, max_value=90,
-                            key=K("hymn_font_size"))
+            c1.number_input("最大字體(pt)", value=54, min_value=20, max_value=54,
+                            key=K("hymn_font_max"))
             c2.number_input("最小字體(pt)", value=36, min_value=20, max_value=80,
                             key=K("hymn_font_min"))
             c3.number_input("左右邊距(吋)", value=0.83, min_value=0.2, max_value=2.0,
                             step=0.05, key=K("hymn_margin_in"))
-            st.caption("每首詩歌的背景圖依序取自 media/song_bg1.jpg…（可於製成時替換）")
+            st.caption("歌詞自動調整字體：在最小～最大之間取能完整放下的"
+                       "最大字體（上限 54pt），並置中對齊。每首詩歌可用下方"
+                       "「背景圖」各自指定背景（預設依序 song_bg1.jpg…）。")
+            if st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
+                           value=sv("hymn_text_shadow", True),
+                           key=K("hymn_text_shadow")):
+                pass
 
             for i, h in enumerate(_get_ui("hymns")):
                 uid = h["_id"]
@@ -665,6 +743,41 @@ with tab_edit:
                     st.text_input("來源",
                                   value=sv(f"hymn_{uid}_source", h.get("source")),
                                   key=K(f"hymn_{uid}_source"))
+                    bg_now = sv(f"hymn_{uid}_bg", h.get("bg", ""))
+                    bg_opts = song_bg_options(bg_now)
+                    bg_labels = {o: ("（依序：song_bg1…）" if not o
+                                     else os.path.basename(o)) for o in bg_opts}
+                    st.selectbox("背景圖", bg_opts,
+                                 index=bg_opts.index(bg_now)
+                                 if bg_now in bg_opts else 0,
+                                 format_func=lambda o: bg_labels.get(o, o),
+                                 key=K(f"hymn_{uid}_bg"))
+                    up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
+                                          "可供所有詩歌選擇）",
+                                          type=["jpg", "jpeg", "png"],
+                                          key=K(f"hymn_{uid}_bgupload"))
+                    if up is not None:
+                        ext = ".png" if (up.name or "").lower().endswith(".png") \
+                            else ".jpg"
+                        path = os.path.join(os.getcwd(), "media",
+                                            "song_bg_%s%s" % (uid[:8], ext))
+                        media_dir = os.path.dirname(path)
+                        os.makedirs(media_dir, exist_ok=True)
+                        with open(path, "wb") as fh:
+                            fh.write(up.getbuffer())
+                        st.session_state[K(f"hymn_{uid}_bg")] = \
+                            os.path.relpath(path, os.getcwd())
+                        st.rerun()
+                    st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在選單）；"
+                           "上傳的圖片只存本機，要放上 Cloud 請把 media/"
+                           "一起提交到 Git。")
+                    prev = sv(f"hymn_{uid}_bg", h.get("bg", ""))
+                    if prev:
+                        cand = prev if os.path.isfile(prev) else \
+                            os.path.join(os.getcwd(), prev)
+                        if os.path.isfile(cand):
+                            st.image(cand, caption="背景預覽：" +
+                                     os.path.basename(cand), width=260)
                     st.text_area("副歌（每行一句，可留空）",
                                  value=sv(f"hymn_{uid}_refrain", h.get("refrain")),
                                  key=K(f"hymn_{uid}_refrain"), height=60)
@@ -686,8 +799,9 @@ with tab_edit:
                         st.rerun()
             if st.button("＋ 新增詩歌", key=K("add_hymn")):
                 _add_item("hymns", {"_id": uuid.uuid4().hex[:8], "title": "",
-                                    "subtitle": "", "source": "", "refrain": "",
-                                    "repeat": True, "stanzas": [""]})
+                                    "subtitle": "", "source": "", "bg": "",
+                                    "refrain": "", "repeat": True,
+                                    "stanzas": [""]})
                 st.rerun()
 
     elif step == 3:
@@ -702,7 +816,7 @@ with tab_edit:
 
     elif step == 4:
         with st.container(border=True):
-            section_header("4", "經文（讀經）", "貼上整段經文，自動分頁")
+            section_header("4", "讀經經文", "貼上整段經文，自動分頁")
             sb, rb = st.columns([2, 3], vertical_alignment="bottom")
             sb.selectbox("書卷", bible.BOOK_NAMES, index=None,
                          placeholder="選擇書卷", key=K("scripture_book"),
@@ -711,7 +825,8 @@ with tab_edit:
             rb.button("從 fhl.net 聖經網輸入", type="primary",
                       key=K("scripture_load"), use_container_width=True,
                       on_click=_fetch_into,
-                      args=(K("scripture_ref"), K("scripture_verses")))
+                      args=(K("scripture_ref"), K("scripture_verses"),
+                            "scripture"))
             st.text_input("出處", value=sv("scripture_ref"),
                           key=K("scripture_ref"),
                           placeholder="羅馬書 12:1-8（和合本）")

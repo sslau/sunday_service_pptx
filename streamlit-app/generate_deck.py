@@ -548,6 +548,19 @@ def fit_size(lines, max_pt, box_w, min_pt=36, inset=0.2):
     return min_pt
 
 
+def _block_fit(lines, box_w, box_h, max_pt, min_pt=36, inset=0.2):
+    """Largest pt in [min_pt, max_pt] so all lines fit both width (no wrap)
+    and height (auto line spacing ≈1.25em).  For 詩歌 lyrics so short stanzas
+    render as big as possible (cap 54pt)."""
+    usable = max(box_w - inset, 0.5)
+    for size in range(max_pt, min_pt - 1, -1):
+        block_h = len(lines) * 1.25 * size / 72.0
+        if block_h <= box_h and all(_line_width_in(l, size) <= usable
+                                    for l in lines):
+            return size
+    return min_pt
+
+
 def _set_solid_bg(slide, hexval):
     """Give the slide a solid-color <p:bg> (overrides layout/master art).
 
@@ -790,10 +803,17 @@ def _reading_pages(text, pt, box_w_in=11.67, inset=0.2, whole_verses=False):
 
 def _reading_slides(pres, ref, text, font_size, ref_size, typeface,
                     whole_verses=False):
-    """Render continuous 經文 onto as many fresh slides as it needs."""
-    for page in _reading_pages(text, font_size, whole_verses=whole_verses):
-        slide = _new_slide(pres)
-        _fresh_reading_slide(slide, ref, page, font_size, ref_size, typeface)
+    """Render continuous 經文 onto as many fresh slides as it needs.
+
+    宣召經文／讀經經文 use a darker navy background (READING_BG) than the
+    default slide blue so the white text stands out more. 出處 is bold and
+    appears only on the FIRST slide of the passage; later slides repurpose
+    that vertical space for more 內容."""
+    pages = _reading_pages(text, font_size, whole_verses=whole_verses)
+    for i, page in enumerate(pages):
+        slide = _new_slide(pres, color=READING_BG)
+        _fresh_reading_slide(slide, ref, page, font_size, ref_size, typeface,
+                             ref_only=(i == 0))
 
 
 def as_paragraphs(lines, size=None):
@@ -875,7 +895,7 @@ def _blank_layout(pres):
 
 
 def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
-                   lines, size, typeface, algn):
+                   lines, size, typeface, algn, shadow=False, bold=False):
     """Add a brand-new textbox from scratch (no template inheritance)."""
     tb = slide.shapes.add_textbox(int(left_in * 914400),
                                   int(top_in * 914400),
@@ -890,17 +910,109 @@ def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
         r.text = line
         r.font.size = Pt(size)
         r.font.color.rgb = RGBColor.from_string("FFFFFF")
+        if bold:
+            r.font.bold = True
+        if shadow:
+            _run_shadow(r)
     _set_font(tb, typeface)
     return tb
 
 
+def _run_shadow(run, color="000000", alpha_pct=90, blur_in=0.80, dist_in=0.50):
+    """Text shadow on a run — the same <a:effectLst><a:outerShdw> XML that
+    PowerPoint itself writes for text shadows, so Microsoft PowerPoint,
+    ONLYOFFICE and LibreOffice render it identically."""
+    rPr = run._r.get_or_add_rPr()
+    for node in rPr.findall(qn("a:effectLst")):
+        rPr.remove(node)
+    eff = OxmlElement("a:effectLst")
+    sh = OxmlElement("a:outerShdw")
+    sh.set("blurRad", str(int(blur_in * 63500)))
+    sh.set("dist", str(int(dist_in * 63500)))
+    sh.set("dir", "5400000")
+    sh.set("algn", "tl")
+    sh.set("rotWithShape", "0")
+    clr = OxmlElement("a:srgbClr")
+    clr.set("val", color)
+    al = OxmlElement("a:alpha")
+    al.set("val", str(int(alpha_pct * 1000)))
+    clr.append(al)
+    sh.append(clr)
+    eff.append(sh)
+    before = None
+    for tag in ("a:latin", "a:ea", "a:cs", "a:sym", "a:hlinkClick",
+                "a:hlinkMouseOver", "a:rtl", "a:extLst"):
+        before = rPr.find(qn(tag))
+        if before is not None:
+            break
+    if before is not None:
+        before.addprevious(eff)
+    else:
+        rPr.append(eff)
+
+
 def _fresh_reading_slide(slide, ref, lines, content_size, ref_size,
-                         typeface):
-    if ref:
+                         typeface, ref_only=True, bold_ref=True):
+    top = 1.5
+    if ref_only and ref:
         _fresh_textbox(slide, 0.83, 0.30, 11.67, 0.95, [ref],
-                       ref_size, typeface, algn=PP_ALIGN.CENTER)
-    _fresh_textbox(slide, 0.83, 1.5, 11.67, 5.7, lines,
-                   content_size, typeface, algn=PP_ALIGN.LEFT)
+                       ref_size, typeface, algn=PP_ALIGN.CENTER,
+                       bold=bold_ref)
+        top = 1.5
+    else:
+        top = 0.85
+    _fresh_verse_box(slide, 0.83, top, 11.67, 6.35, lines,
+                     content_size, typeface)
+
+
+def _verse_sup_runs(line):
+    """Split a reading line into runs so EVERY verse number (e.g. `1 `, `1在`,
+    `10:2 `) becomes its own superscript run, wherever it appears in the
+    line — leading, after sentence punctuation, or glued mid-line because
+    verses were joined without a separator; the surrounding text stays
+    normal. A number is treated as a verse marker only when it follows the
+    line start or sentence punctuation, then a space, a CJK character, a
+    full-width punctuation/bracket, or a letter — so plain numbers inside
+    sentences (dates, counts) are left alone."""
+    pat = re.compile(r"(?:^|[。；，」』）】])(\d{1,3}(?::\d{1,3})?)(?=[ 　]|[一-龥A-Za-z\uFF01-\uFF65])")
+    out, pos = [], 0
+    for m in pat.finditer(line):
+        if m.start() > pos:
+            out.append((line[pos:m.start(1)], False))
+        out.append((m.group(1), True))
+        pos = m.end(1)
+    if pos < len(line):
+        out.append((line[pos:], False))
+    return out or [(line, False)]
+
+
+def _fresh_verse_box(slide, left_in, top_in, width_in, height_in,
+                     lines, size, typeface):
+    """Reading-slide content textbox: leading verse numbers in superscript
+    (same size as body, baseline-raised 30% like PowerPoint writes)."""
+    tb = slide.shapes.add_textbox(int(left_in * 914400),
+                                  int(top_in * 914400),
+                                  int(width_in * 914400),
+                                  int(height_in * 914400))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    for i, line in enumerate(lines):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.LEFT
+        for text, sup in _verse_sup_runs(line):
+            r = p.add_run()
+            r.text = text
+            r.font.color.rgb = RGBColor.from_string("FFFFFF")
+            if sup:
+                r.font.size = Pt(size)
+                rPr = r._r.get_or_add_rPr()
+                rPr.set("baseline", "30000")
+                if "vertAlign" in rPr.attrib:
+                    del rPr.attrib["vertAlign"]
+            else:
+                r.font.size = Pt(size)
+    _set_font(tb, typeface)
+    return tb
 
 
 def _image_cover(slide, path, width, height):
@@ -913,6 +1025,9 @@ def _image_cover(slide, path, width, height):
         return
     slide.shapes.add_picture(path, 0, 0, width, height)
     remove_shapes(slide, list(range(len(list(slide.shapes)) - 1)))
+
+
+READING_BG = "0B2A5B"          # 宣召經文／讀經經文 slides: darker navy bg
 
 
 def _new_slide(pres, color="1F3A6E", bg=None):
@@ -947,26 +1062,35 @@ def build_hymns_section(pres, cfg, hymns):
     Prints nothing; appends slides straight onto `pres`.  Also used to compile
     a standalone songs deck (build_section_deck with section="hymns")."""
     margin, box_w, typeface = _section_geometry(cfg, pres)
-    hymn_font_size = cfg.get("hymn_font_size", 44)
     hymn_font_min = cfg.get("hymn_font_min", 36)
+    hymn_font_max = cfg.get("hymn_font_max", 54)
     for i, hymn in enumerate(hymns):
-        bg = hymn.get("bg") or os.path.join(
-            os.getcwd(), "media", "song_bg%d.jpg" % (i + 1))
+        bg = hymn.get("bg") or ""
+        if bg:
+            if not os.path.isfile(bg):
+                cand = os.path.join(os.getcwd(), bg)
+                if os.path.isfile(cand):
+                    bg = cand
+            if not os.path.isfile(bg):
+                bg = ""
+        if not bg:
+            bg = os.path.join(os.getcwd(), "media", "song_bg%d.jpg" % (i + 1))
         if not os.path.isfile(bg):
             bg = None
 
         # title card
         slide = _new_slide(pres, bg=bg)
         title = hymn["title"]
-        tsize = 54 if len(title) <= 8 else 34
+        tsize = fit_size([title], 60, box_w, min_pt=34)
+        shadow = cfg.get("hymn_text_shadow", True)
         _fresh_textbox(slide, margin, 2.0, box_w, 1.4, [title],
-                       tsize, typeface, PP_ALIGN.CENTER)
+                       tsize, typeface, PP_ALIGN.CENTER, shadow=shadow)
         if hymn.get("subtitle"):
             _fresh_textbox(slide, margin, 3.5, box_w, 0.9, [hymn["subtitle"]],
-                           30, typeface, PP_ALIGN.CENTER)
+                           30, typeface, PP_ALIGN.CENTER, shadow=shadow)
         if hymn.get("source"):
-            _fresh_textbox(slide, margin, 6.3, box_w, 0.7, [hymn["source"]],
-                           20, typeface, PP_ALIGN.LEFT)
+            _fresh_textbox(slide, margin, 4.6, box_w, 0.7, [hymn["source"]],
+                           36, typeface, PP_ALIGN.CENTER, shadow=shadow)
 
         refrain = hymn.get("refrain")
         repeat_refrain = bool(refrain) and hymn.get("refrain_after_every_verse",
@@ -974,9 +1098,11 @@ def build_hymns_section(pres, cfg, hymns):
 
         def add_verse(lines, bg=bg):
             slide = _new_slide(pres, bg=bg)
-            size = fit_size(lines, hymn_font_size, box_w, min_pt=hymn_font_min)
-            _fresh_textbox(slide, margin, 0.55, box_w, 6.4, lines,
-                           size, typeface, PP_ALIGN.LEFT)
+            size = _block_fit(lines, box_w, 5.5, hymn_font_max,
+                              min_pt=hymn_font_min)
+            _fresh_textbox(slide, margin, 1.2, box_w, 5.5, lines,
+                           size, typeface, PP_ALIGN.CENTER,
+                           shadow=cfg.get("hymn_text_shadow", True))
 
         for verse_lines in hymn["verses"]:
             add_verse(verse_lines)
@@ -1106,7 +1232,7 @@ def build_section_deck(section, cfg, template=None):
         sc = cfg.get("scripture", {}) or {}
         if sc.get("verses"):
             typeface = cfg.get("call_font", "DFKai-SB")
-            _reading_slides(pres, sc.get("ref"), "".join(sc["verses"]),
+            _reading_slides(pres, sc.get("ref"), " ".join(sc["verses"]),
                             max(44, int(sc.get("font_size")
                                         or cfg.get("scripture_font_size", 44))),
                             sc.get("ref_size", 48), typeface,
@@ -1165,7 +1291,7 @@ def build(pres, cfg):
         psalm_font = max(44, int(psalm.get("font_size")
                                  or cfg.get("psalm_font_size", 44)))
         psalm_ref = psalm.get("ref_size", 48)
-        _reading_slides(pres, psalm.get("ref"), "".join(psalm["verses"]),
+        _reading_slides(pres, psalm.get("ref"), " ".join(psalm["verses"]),
                         psalm_font, psalm_ref, typeface, whole_verses=True)
 
     # 詩歌敬拜 header
@@ -1177,7 +1303,10 @@ def build(pres, cfg):
         songs_path = locate_songs_file(cfg)
         if songs_path:
             try:
-                import_deck(pres, songs_path, "songs")
+                if import_deck(pres, songs_path, "songs") < 1:
+                    print("warning: songs pptx has no slides (%s), "
+                          "generating hymns from config" % songs_path)
+                    songs_path = None
             except Exception as exc:
                 print("warning: could not import %s (%s), generating hymns from config"
                       % (songs_path, exc))
@@ -1199,7 +1328,10 @@ def build(pres, cfg):
         offering_path = locate_offering_file(cfg)
         if offering_path:
             try:
-                import_deck(pres, offering_path, "offering")
+                if import_deck(pres, offering_path, "offering") < 1:
+                    print("warning: offering pptx has no slides (%s), skipping"
+                          % offering_path)
+                    offering_path = None
             except Exception as exc:
                 print("warning: could not import %s (%s)" % (offering_path, exc))
                 offering_path = None
@@ -1214,7 +1346,7 @@ def build(pres, cfg):
                                       or cfg.get("scripture_font_size", 44)))
         scripture_ref = scripture.get("ref_size", 48)
         _reading_slides(pres, scripture.get("ref"),
-                        "".join(scripture["verses"]),
+                        " ".join(scripture["verses"]),
                         scripture_font, scripture_ref, typeface,
                         whole_verses=True)
 
@@ -1224,7 +1356,10 @@ def build(pres, cfg):
         sermons_path = locate_sermon_file(cfg)
         if sermons_path:
             try:
-                import_deck(pres, sermons_path, "sermon")
+                if import_deck(pres, sermons_path, "sermon") < 1:
+                    print("warning: sermon pptx has no slides (%s), "
+                          "generating sermon from config" % sermons_path)
+                    sermons_path = None
             except Exception as exc:
                 print("warning: could not import %s (%s), generating sermon from config"
                       % (sermons_path, exc))
@@ -1244,7 +1379,10 @@ def build(pres, cfg):
             try:
                 if response_has_content:
                     add_image("response_header")
-                import_deck(pres, response_path, "response")
+                if import_deck(pres, response_path, "response") < 1:
+                    print("warning: response pptx has no slides (%s), "
+                          "generating from config" % response_path)
+                    response_path = None
             except Exception as exc:
                 print("warning: could not import %s (%s)" % (response_path, exc))
                 response_path = None
@@ -1276,7 +1414,10 @@ def build(pres, cfg):
         announcements_path = locate_announcements_file(cfg)
         if announcements_path:
             try:
-                import_deck(pres, announcements_path, "announcements")
+                if import_deck(pres, announcements_path, "announcements") < 1:
+                    print("warning: announcements pptx has no slides (%s), "
+                          "generating from config" % announcements_path)
+                    announcements_path = None
             except Exception as exc:
                 print("warning: could not import %s (%s), generating announcements from config"
                       % (announcements_path, exc))
@@ -1298,7 +1439,7 @@ def plan(cfg):
     psalm = cfg.get("psalm", {})
     if psalm.get("verses"):
         count += len(_reading_pages(
-            "".join(psalm["verses"]),
+            " ".join(psalm["verses"]),
             max(44, int(psalm.get("font_size")
                          or cfg.get("psalm_font_size", 44))),
             whole_verses=True))
@@ -1316,7 +1457,7 @@ def plan(cfg):
     scripture = cfg.get("scripture", {})
     if scripture.get("verses"):
         count += len(_reading_pages(
-            "".join(scripture["verses"]),
+            " ".join(scripture["verses"]),
             max(44, int(scripture.get("font_size")
                          or cfg.get("scripture_font_size", 44))),
             whole_verses=True))

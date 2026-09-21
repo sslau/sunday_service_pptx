@@ -10,8 +10,9 @@
       "3 你們和我當稱耶和華為大，一同高舉他的名。"
     ]
   },
-  "hymn_font_size": 44,
+  "hymn_font_max": 54,
   "hymn_font_min": 36,
+  "hymn_text_shadow": true,
   "hymn_margin_in": 0.83,
   "hymns": [
     {
