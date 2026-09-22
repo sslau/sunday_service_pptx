@@ -17,12 +17,19 @@ Example:
 import json
 import os
 import re
+import ssl
 import urllib.parse
 import urllib.request
 
 API = "https://bible.fhl.net/json/qb.php"
 DEFAULT_VERSION = "unv"
 USER_AGENT = "Mozilla/5.0 (compatible; SundayServiceSlides/1.0)"
+
+try:
+    import certifi
+    SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    SSL_CTX = ssl._create_unverified_context()
 
 # Book name (full or abbreviation) -> FHL `chineses` code.  All 66 codes below
 # were verified to return records from the API.
@@ -84,22 +91,123 @@ def _load_books():
 
 BOOK_NAMES, _loaded = _load_books()
 _loaded.update({v: v for v in set(_loaded.values())})  # accept codes too
+
+# English abbreviated/full book names -> the same FHL code as the Chinese name.
+_BOOK_EN = {
+    "創世記": ("Gen", "Genesis"), "出埃及記": ("Exo", "Exodus"),
+    "利未記": ("Lev", "Leviticus"), "民數記": ("Num", "Numbers"),
+    "申命記": ("Deu", "Deuteronomy"), "約書亞記": ("Jos", "Joshua"),
+    "士師記": ("Jdg", "Judges"), "路得記": ("Rut", "Ruth"),
+    "撒母耳記上": ("1Sa", "1 Samuel"), "撒母耳記下": ("2Sa", "2 Samuel"),
+    "列王紀上": ("1Ki", "1 Kings"), "列王紀下": ("2Ki", "2 Kings"),
+    "歷代志上": ("1Ch", "1 Chronicles"), "歷代志下": ("2Ch", "2 Chronicles"),
+    "以斯拉記": ("Ezr", "Ezra"), "尼希米記": ("Neh", "Nehemiah"),
+    "以斯帖記": ("Est", "Esther"), "約伯記": ("Job", "Job"),
+    "詩篇": ("Psa", "Psalms"), "箴言": ("Pro", "Proverbs"),
+    "傳道書": ("Ecc", "Ecclesiastes"), "雅歌": ("Sng", "Song of Songs"),
+    "以賽亞書": ("Isa", "Isaiah"), "耶利米書": ("Jer", "Jeremiah"),
+    "耶利米哀歌": ("Lam", "Lamentations"), "以西結書": ("Eze", "Ezekiel"),
+    "但以理書": ("Dan", "Daniel"), "何西阿書": ("Hos", "Hosea"),
+    "約珥書": ("Joe", "Joel"), "阿摩司書": ("Amo", "Amos"),
+    "俄巴底亞書": ("Oba", "Obadiah"), "約拿書": ("Jon", "Jonah"),
+    "彌迦書": ("Mic", "Micah"), "那鴻書": ("Nah", "Nahum"),
+    "哈巴谷書": ("Hab", "Habakkuk"), "西番雅書": ("Zep", "Zephaniah"),
+    "哈該書": ("Hag", "Haggai"), "撒迦利亞書": ("Zec", "Zechariah"),
+    "瑪拉基書": ("Mal", "Malachi"), "馬太福音": ("Mat", "Matthew"),
+    "馬可福音": ("Mar", "Mark"), "路加福音": ("Luk", "Luke"),
+    "約翰福音": ("Jhn", "John"), "使徒行傳": ("Act", "Acts"),
+    "羅馬書": ("Rom", "Romans"), "哥林多前書": ("1Co", "1 Corinthians"),
+    "哥林多後書": ("2Co", "2 Corinthians"), "加拉太書": ("Gal", "Galatians"),
+    "以弗所書": ("Eph", "Ephesians"), "腓立比書": ("Php", "Philippians"),
+    "歌羅西書": ("Col", "Colossians"),
+    "帖撒羅尼迦前書": ("1Th", "1 Thessalonians"),
+    "帖撒羅尼迦後書": ("2Th", "2 Thessalonians"),
+    "提摩太前書": ("1Ti", "1 Timothy"), "提摩太後書": ("2Ti", "2 Timothy"),
+    "提多書": ("Tit", "Titus"), "腓利門書": ("Phm", "Philemon"),
+    "希伯來書": ("Heb", "Hebrews"), "雅各書": ("Jas", "James"),
+    "彼得前書": ("1Pe", "1 Peter"), "彼得後書": ("2Pe", "2 Peter"),
+    "約翰一書": ("1Jn", "1 John"), "約翰二書": ("2Jn", "2 John"),
+    "約翰三書": ("3Jn", "3 John"), "猶大書": ("Jud", "Jude"),
+    "啟示錄": ("Rev", "Revelation"),
+}
+for _cn, (_en_abbr, _en_full) in _BOOK_EN.items():
+    _fhl = _loaded.get(_cn)
+    if _fhl:
+        for _alias in (_en_abbr, _en_full, _en_abbr.lower(), _en_full.lower()):
+            _loaded[_alias] = _fhl
+
+# Common short English aliases ("Ps" for Psalms, "Prov" for Proverbs, ...).
+_BOOK_EN_ALIASES = {
+    "創世記": ("Gen",), "出埃及記": ("Ex", "Exod",),
+    "利未記": ("Lev",), "民數記": ("Num",), "申命記": ("Deut",),
+    "約書亞記": ("Josh",), "士師記": ("Judg",), "路得記": ("Ruth",),
+    "詩篇": ("Ps", "Psalm", "Psal",), "箴言": ("Prov", "Pr",),
+    "傳道書": ("Eccl", "Eccles",), "雅歌": ("Song", "SOS", "Song of Solomon",),
+    "馬太福音": ("Matt", "Mt",), "馬可福音": ("Mk", "Mark", "Mrk",),
+    "路加福音": ("Luke", "Lk",), "約翰福音": ("John", "Joh", "Jn",),
+    "使徒行傳": ("Acts", "Acts of the Apostles",),
+    "啟示錄": ("Revelations", "Re",),
+}
+for _cn, _aliases in _BOOK_EN_ALIASES.items():
+    _fhl = _loaded.get(_cn)
+    if _fhl:
+        for _alias in _aliases:
+            _loaded[_alias] = _fhl
+            _loaded[_alias.lower()] = _fhl
 _BOOKS = _loaded
 _NAMES_BY_LEN = sorted(_BOOKS, key=len, reverse=True)
+
+
+def book_en(name):
+    """English abbreviation for a Chinese book name (e.g. 創世記 -> Gen)."""
+    pair = _BOOK_EN.get(str(name).strip())
+    return pair[0] if pair else ""
 
 
 def split_book(ref):
     """Split a reference into (leading_book_name|None, remainder)."""
     s = str(ref).strip()
+    sl = s.lower()
     for name in _NAMES_BY_LEN:
-        if s.startswith(name):
+        if sl.startswith(name.lower()):
             return name, s[len(name):].strip()
     return None, s
+
+
+def book_full_name(name):
+    """Full Chinese book name from any accepted alias/code, or the input as-is."""
+    if not name:
+        return name
+    code = _BOOKS.get(str(name).strip())
+    return code if not code else next((n for n in BOOK_NAMES
+                                       if _BOOKS[n] == code), str(name).strip())
+
+
+def expand_book_ref(ref):
+    """Rewrite a 出處 string so every book is the full Chinese name.
+
+    Handles FHL abbreviations (詩 120:1-2 -> 詩篇 120:1-2), Chinese full names
+    (unchanged), and English abbreviations/full names (Acts 13:1-12 ->
+    使徒行傳 13:1-12).  Multi-book refs（`；`-separated）are each expanded."""
+    if not ref:
+        return ref
+    parts = []
+    for seg in str(ref).split("；"):
+        seg = seg.strip()
+        if not seg:
+            continue
+        name, rest = split_book(seg)
+        full = book_full_name(name) if name else None
+        if full and full != name:
+            seg = f"{full} {rest}".strip() if rest else full
+        parts.append(seg)
+    return "；".join(parts)
 
 # Translation label -> FHL `version` code.
 _VERSIONS = {
     "和合本": "unv", "fhl和合本": "unv",
     "和合本2010": "rcuv", "和合本2010版": "rcuv",
+    "和修版": "rcuv", "和修本": "rcuv",
     "現代中文譯本": "tcv95", "現代中文譯本1995版": "tcv95",
     "現代中文譯本2019版": "tcv2019",
     "環球譯本": "wcb", "新譯本": "ncv", "中文標準譯本": "csb",
@@ -131,7 +239,8 @@ def book_code(name):
 
 
 def parse_reference(ref):
-    """Parse e.g. '羅馬書 12:1-8（和合本）' into (book_code, version, specs).
+    """Parse e.g. '羅馬書 12:1-8（和合本）' or 'Acts 13:1-12' into
+    (book_code, version, specs).
 
     `specs` is a list of (chapter, start_verse|None, end_verse|None); None means
     the start/end of that chapter.  Raises ValueError on anything unparseable.
@@ -143,14 +252,13 @@ def parse_reference(ref):
         version = version_code(note.group(1)) or version
         s = (s[:note.start()] + s[note.end():]).strip()
 
-    m = re.match(r"^\s*([^\d]+?)\s*(\d.*)$", s)
-    if not m:
+    name, rest = split_book(s)
+    if not name:
         raise ValueError("格式應如「詩篇 34:1-3」")
-    code = book_code(m.group(1))
+    code = book_code(name)
     if not code:
-        raise ValueError("找不到書卷「%s」" % m.group(1).strip())
+        raise ValueError("找不到書卷「%s」" % name.strip())
 
-    rest = m.group(2)
     rest = rest.replace("：", ":").replace("，", ",").replace(",", " ")
     rest = re.sub(r"[～~－–—]", "-", rest)
     specs = []
@@ -183,7 +291,7 @@ def _fetch_chapter(code, chap, version):
     url = "%s?%s" % (API, urllib.parse.urlencode(
         {"chineses": code, "chap": chap, "version": version}))
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with urllib.request.urlopen(req, timeout=20, context=SSL_CTX) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     if data.get("status") != "success":
         raise ValueError("聖經網站回應失敗")

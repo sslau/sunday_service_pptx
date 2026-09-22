@@ -5,7 +5,7 @@
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
       "hymn_font_max": 54,   # lyrics auto-fit ceiling (goes big up to this)
-      "hymn_font_min":  36,
+      "hymn_font_min":  44,
       "hymn_margin_in": 0.83,
       "hymns": [ {title, subtitle, source, refrain[], refrain_after_every_verse,
                   verses[ [line...], ... ]} ],
@@ -96,9 +96,10 @@ def normalize_week(w):
     w["psalm"] = psalm
 
     w["hymn_font_max"] = _num(w.get("hymn_font_max"), 54)
-    w["hymn_font_min"] = _num(w.get("hymn_font_min"), 36)
+    w["hymn_font_min"] = _num(w.get("hymn_font_min"), 44)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
     w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))
+    w["hymns_finalized"] = bool(w.get("hymns_finalized", False))
 
     hymns = []
     for h in (w.get("hymns") or []):
@@ -107,6 +108,8 @@ def normalize_week(w):
             "title": str(h.get("title") or ""),
             "subtitle": str(h.get("subtitle") or ""),
             "source": str(h.get("source") or ""),
+            "music": str(h.get("music") or ""),
+            "lyricist": str(h.get("lyricist") or ""),
             "bg": str(h.get("bg") or ""),
             "refrain": (_stanza_lines(h.get("refrain")) or None),
             "refrain_after_every_verse": bool(h.get("refrain_after_every_verse", True)),
@@ -144,12 +147,16 @@ def normalize_week(w):
     response["title"] = str(response.get("title") or "")
     response["subtitle"] = str(response.get("subtitle") or "")
     response["source"] = str(response.get("source") or "")
+    response["music"] = str(response.get("music") or "")
+    response["lyricist"] = str(response.get("lyricist") or "")
+    response["bg"] = str(response.get("bg") or "")
     response["refrain"] = _stanza_lines(response.get("refrain")) or None
     response["refrain_after_every_verse"] = bool(
         response.get("refrain_after_every_verse", True))
     response["verses"] = [_stanza_lines(stanza)
                           for stanza in (response.get("verses") or [])]
     response["verses"] = [s for s in response["verses"] if s]
+    response["finalized"] = bool(response.get("finalized", False))
     w["response"] = response
 
     announcements = []

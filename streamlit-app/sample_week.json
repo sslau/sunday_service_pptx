@@ -11,7 +11,7 @@
     ]
   },
   "hymn_font_max": 54,
-  "hymn_font_min": 36,
+  "hymn_font_min": 44,
   "hymn_text_shadow": true,
   "hymn_margin_in": 0.83,
   "hymns": [
@@ -19,6 +19,8 @@
       "title": "每一天",
       "subtitle": "Day By Day",
       "source": "聖詩 73",
+      "music": "",
+      "lyricist": "",
       "refrain": null,
       "refrain_after_every_verse": true,
       "verses": [
@@ -40,6 +42,8 @@
       "title": "流通管子",
       "subtitle": "Channels Only",
       "source": "青年聖歌 III, 83",
+      "music": "",
+      "lyricist": "",
       "refrain": [
         "主啊，我願成為管子，藉我流露主恩典；",
         "求主大能向我湧流，使用我，每時每天。"

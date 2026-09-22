@@ -29,6 +29,7 @@ import re
 import shutil
 import sys
 
+import bible  # noqa: E402
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -918,6 +919,28 @@ def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
     return tb
 
 
+def _add_slide_page(slide, page, total, typeface):
+    """Bottom-right 頁碼 `N/M` for a songs slide (white, subtle shadow so it
+    stays readable over any 背景圖)."""
+    try:
+        w = slide.slide_width / 914400
+    except Exception:
+        w = 13.33
+    top = 6.75 if w < 14 else 6.9
+    tb = slide.shapes.add_textbox(int((w - 1.6) * 914400), int(top * 914400),
+                                  int(1.4 * 914400), int(0.45 * 914400))
+    tf = tb.text_frame
+    tf.word_wrap = False
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.RIGHT
+    r = p.add_run()
+    r.text = f"{page}/{total}"
+    r.font.size = Pt(16)
+    r.font.color.rgb = RGBColor.from_string("FFFFFF")
+    _run_shadow(r)
+    _set_font(tb, typeface)
+
+
 def _run_shadow(run, color="000000", alpha_pct=90, blur_in=0.80, dist_in=0.50):
     """Text shadow on a run — the same <a:effectLst><a:outerShdw> XML that
     PowerPoint itself writes for text shadows, so Microsoft PowerPoint,
@@ -955,7 +978,8 @@ def _fresh_reading_slide(slide, ref, lines, content_size, ref_size,
                          typeface, ref_only=True, bold_ref=True):
     top = 1.5
     if ref_only and ref:
-        _fresh_textbox(slide, 0.83, 0.30, 11.67, 0.95, [ref],
+        _fresh_textbox(slide, 0.83, 0.30, 11.67, 0.95,
+                       [bible.expand_book_ref(ref)],
                        ref_size, typeface, algn=PP_ALIGN.CENTER,
                        bold=bold_ref)
         top = 1.5
@@ -1056,14 +1080,24 @@ def _section_geometry(cfg, pres):
             cfg.get("call_font", "DFKai-SB"))
 
 
+_HYMN_PUNCT = re.compile(r"[，。、；：！？「」『』（）《》〈〉【】…—～·‧　,.!?;:]")
+_MAX_CHARS_PER_LINE = 19  # including punctuation marks
+
+
+def _hymn_clean_line(line):
+    """Slides show lyrics with punctuation blanked out: each punctuation mark
+    is replaced by a single space, runs collapsed, so `，`/`。` read as pauses.
+    每行至多 19 字（含標點）的規則由此配合。"""
+    s = _HYMN_PUNCT.sub(" ", line)
+    return re.sub(r"[ ]{2,}", " ", s).strip()
+
+
 def build_hymns_section(pres, cfg, hymns):
     """詩歌敬拜：每首詩歌 = 標題卡 + 各段歌詞（＋副歌），背景 song_bg*.jpg。
 
     Prints nothing; appends slides straight onto `pres`.  Also used to compile
     a standalone songs deck (build_section_deck with section="hymns")."""
     margin, box_w, typeface = _section_geometry(cfg, pres)
-    hymn_font_min = cfg.get("hymn_font_min", 36)
-    hymn_font_max = cfg.get("hymn_font_max", 54)
     for i, hymn in enumerate(hymns):
         bg = hymn.get("bg") or ""
         if bg:
@@ -1086,25 +1120,47 @@ def build_hymns_section(pres, cfg, hymns):
         _fresh_textbox(slide, margin, 2.0, box_w, 1.4, [title],
                        tsize, typeface, PP_ALIGN.CENTER, shadow=shadow)
         if hymn.get("subtitle"):
-            _fresh_textbox(slide, margin, 3.5, box_w, 0.9, [hymn["subtitle"]],
+            _fresh_textbox(slide, margin, 3.4, box_w, 0.9, [hymn["subtitle"]],
                            30, typeface, PP_ALIGN.CENTER, shadow=shadow)
+        attrs = []
         if hymn.get("source"):
-            _fresh_textbox(slide, margin, 4.6, box_w, 0.7, [hymn["source"]],
-                           36, typeface, PP_ALIGN.CENTER, shadow=shadow)
+            attrs.append("詩集: " + hymn["source"])
+        if hymn.get("music"):
+            attrs.append("曲: " + hymn["music"])
+        if hymn.get("lyricist"):
+            attrs.append("詞: " + hymn["lyricist"])
+        if attrs:
+            _fresh_textbox(slide, margin, 4.3, box_w, 1.6, attrs, 26,
+                           typeface, PP_ALIGN.CENTER, shadow=shadow)
 
-        refrain = hymn.get("refrain")
+        # 每首詩歌的總頁數：各段（＋副歌）— 標題卡不計。
+        verses = [[_hymn_clean_line(ln) for ln in vs]
+                  for vs in hymn.get("verses", [])]
+        refrain = hymn.get("refrain") or None
+        if refrain:
+            refrain = [_hymn_clean_line(ln) for ln in refrain]
         repeat_refrain = bool(refrain) and hymn.get("refrain_after_every_verse",
                                                     True)
 
-        def add_verse(lines, bg=bg):
-            slide = _new_slide(pres, bg=bg)
-            size = _block_fit(lines, box_w, 5.5, hymn_font_max,
-                              min_pt=hymn_font_min)
-            _fresh_textbox(slide, margin, 1.2, box_w, 5.5, lines,
-                           size, typeface, PP_ALIGN.CENTER,
-                           shadow=cfg.get("hymn_text_shadow", True))
+        total = len(verses)
+        if refrain and repeat_refrain:
+            total += len(verses)
+        elif refrain:
+            total += 1
+        # 全首詩歌使用固定 44pt（每行至多 19 字即可不出框）,標題卡另行處理。
+        song_size = 44
+        page = 0
 
-        for verse_lines in hymn["verses"]:
+        def add_verse(lines, bg=bg):
+            nonlocal page
+            page += 1
+            slide = _new_slide(pres, bg=bg)
+            _fresh_textbox(slide, margin, 1.2, box_w, 5.5, lines,
+                           song_size, typeface, PP_ALIGN.CENTER,
+                           shadow=cfg.get("hymn_text_shadow", True))
+            _add_slide_page(slide, page, total, typeface)
+
+        for verse_lines in verses:
             add_verse(verse_lines)
             if repeat_refrain:
                 add_verse(refrain)
@@ -1122,6 +1178,9 @@ def build_response_section(pres, cfg):
         "title": response.get("title", ""),
         "subtitle": response.get("subtitle", ""),
         "source": response.get("source", ""),
+        "music": response.get("music", ""),
+        "lyricist": response.get("lyricist", ""),
+        "bg": response.get("bg", ""),
         "refrain": response.get("refrain"),
         "refrain_after_every_verse": response.get(
             "refrain_after_every_verse", True),
@@ -1142,7 +1201,7 @@ def build_sermon_section(pres, cfg, sermon):
         if sermon.get("title_2"):
             items.append((sermon["title_2"], 32))
         if sermon.get("scripture"):
-            items.append((sermon["scripture"],
+            items.append((bible.expand_book_ref(sermon["scripture"]),
                           sermon.get("ref_size", 28)))
         # centered title block
         top = 1.5

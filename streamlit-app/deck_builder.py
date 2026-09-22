@@ -10,11 +10,15 @@ and handed to the generator as absolute paths.
 """
 import copy
 import io
+import json
 import os
+import re
 import tempfile
 
-from generate_deck import (build, build_section_deck, plan)
+from generate_deck import (_blank_layout, build, build_section_deck, plan)  # noqa: E402
 from pptx import Presentation
+
+_PPTX_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "blank_16x9.pptx")
@@ -73,6 +77,61 @@ def clear_section_deck(section, date):
         os.remove(path)
         return True
     return False
+
+
+def video_mp4_path(date):
+    """Canonical save path for a generated 家事MP4 (may not exist yet)."""
+    if not date:
+        return None
+    return os.path.join(SAVE_DIR, str(date),
+                        "announcements_{date}.mp4".format(date=date))
+
+
+def saved_video_mp4(date):
+    """Path of a previously generated 家事MP4, or None."""
+    path = video_mp4_path(date)
+    return path if path and os.path.isfile(path) else None
+
+
+def save_video_mp4(date, data):
+    """Persist a generated 家事MP4 so a later reload/build can reuse it
+    (session_state alone is wiped on restart).  Returns the saved path."""
+    path = video_mp4_path(date)
+    if not path:
+        return None
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
+
+
+def _video_meta_path(date):
+    if not date:
+        return None
+    return os.path.join(SAVE_DIR, str(date), "video_first.json")
+
+
+def save_video_meta(date, first_page):
+    """Persist the 併入第一頁 checkbox value next to the generated MP4."""
+    path = _video_meta_path(date)
+    if not path:
+        return None
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"first_page": bool(first_page)}, fh)
+    return path
+
+
+def saved_video_meta(date):
+    """Previously persisted 併入第一頁 value, or None if unknown."""
+    path = _video_meta_path(date)
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return bool(json.load(fh).get("first_page"))
+    except (OSError, ValueError, TypeError):
+        return None
 
 # Header/image slots the generator resolves from the config (keys are the
 # exact names generate_deck.build reads).  Exposed as optional build-time
@@ -209,3 +268,114 @@ def build_section_pptx_bytes(section, week, announcement_images=None):
     buf = io.BytesIO()
     pres.save(buf)
     return buf.getvalue(), len(pres.slides._sldIdLst)
+
+
+def build_hymn_pptx_bytes(cfg, hymn):
+    """Compile a single worship hymn (標題卡 + that hymn's slides) into its own
+    standalone .pptx for inline per-song preview.  `cfg` can be a full assembled
+    week; only the hymn_* layout keys and date are used.  Returns
+    (pptx_bytes, slide_count)."""
+    from generate_deck import build_hymns_section, clear_slides
+    os.chdir(HERE)
+    pres = Presentation(TEMPLATE)
+    clear_slides(pres)
+    if hymn.get("verses") or hymn.get("title"):
+        build_hymns_section(pres, cfg, [hymn])
+    buf = io.BytesIO()
+    pres.save(buf)
+    return buf.getvalue(), len(pres.slides._sldIdLst)
+
+
+def hymn_preview(data):
+    """Read a compiled single-hymn pptx and summarise every slide for an
+    inline text preview: [{lines: [(text, pt|None), ...], bg: bool}].  Text,
+    font size and background come straight from the generated file, so it
+    mirrors the real slides.  Page-number (N/M) flagged out."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    pres = Presentation(io.BytesIO(data))
+    out = []
+    for slide in pres.slides:
+        lines, has_bg, seen = [], False, set()
+        for sh in slide.shapes:
+            if sh.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                has_bg = True
+                continue
+            if not sh.has_text_frame:
+                continue
+            for p in sh.text_frame.paragraphs:
+                txt = "".join(r.text for r in p.runs).strip()
+                if not txt or re.match(r"^\d{1,3}/\d{1,3}$", txt):
+                    continue
+                size = p.runs[0].font.size
+                pt = round(size.pt) if size else None
+                if (txt, pt) not in seen:
+                    seen.add((txt, pt))
+                    lines.append((txt, pt))
+        out.append({"lines": lines, "bg": has_bg})
+    return out
+
+
+def prepend_video_slide(pptx_data, mp4_bytes, poster_bytes):
+    """Return a new compiled deck whose FIRST slide is the announcements MP4
+    embedded full-bleed, set to play automatically when the slide appears and
+    keep looping until the presenter clicks to the next slide.
+
+    pptx_data : bytes of the compiled .pptx
+    mp4_bytes : bytes of the MP4 to embed
+    poster_bytes : bytes of a PNG poster (shown before playback / in editor)
+    """
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tm:
+        tm.write(mp4_bytes)
+        mp4_path = tm.name
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tp:
+        tp.write(poster_bytes)
+        poster_path = tp.name
+    try:
+        pres = Presentation(io.BytesIO(pptx_data))
+        slide = pres.slides.add_slide(_blank_layout(pres))
+        for shp in list(slide.shapes):
+            shp._element.getparent().remove(shp._element)
+        # Poster frame laid beneath the video so the first slide always shows
+        # the frame even in viewers that do not render embedded video.
+        slide.shapes.add_picture(poster_path, 0, 0,
+                                 pres.slide_width, pres.slide_height)
+        gf = slide.shapes.add_movie(
+            mp4_path, 0, 0, pres.slide_width, pres.slide_height,
+            poster_frame_image=poster_path, mime_type="video/mp4")
+        _set_media_autoplay_loop(slide._element, gf.shape_id)
+        sldIdLst = pres.slides._sldIdLst
+        last = sldIdLst[-1]
+        sldIdLst.remove(last)
+        sldIdLst.insert(0, last)
+        out = io.BytesIO()
+        pres.save(out)
+        return out.getvalue()
+    finally:
+        os.unlink(mp4_path)
+        os.unlink(poster_path)
+
+
+def _set_media_autoplay_loop(slde, spid):
+    """Flip the movie's playback options straight on the <p:timing> node that
+    python-pptx already creates for add_movie(), mirroring exactly what
+    PowerPoint writes for “Start: Automatically + Loop until stopped + Rewind
+    after playing”.  Appending a second <p:timing> breaks playback, so we tune
+    the existing one instead:
+      - start <p:cond delay="0">            -> play on slide entry
+      - <p:cTn repeatCount="indefinite">    -> loop until stopped
+      - <p:cTn fill="remove">               -> rewind after playing
+    """
+    for video in slde.findall(".//p:timing//p:video",
+                              {"p": _PPTX_NS}):
+        tgt = video.find(".//p:tgtEl/p:spTgt", {"p": _PPTX_NS})
+        if tgt is None or tgt.get("spid") != str(spid):
+            continue
+        ctn = video.find(".//p:cMediaNode/p:cTn", {"p": _PPTX_NS})
+        if ctn is None:
+            continue
+        ctn.set("repeatCount", "indefinite")
+        ctn.set("fill", "remove")
+        cond = ctn.find(".//p:stCondLst/p:cond", {"p": _PPTX_NS})
+        if cond is not None:
+            cond.set("delay", "0")
+        return

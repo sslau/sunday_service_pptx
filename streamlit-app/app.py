@@ -10,8 +10,12 @@ Deploy: push this folder to GitHub → Streamlit Community Cloud (see README).
 Data lives in Google Sheets so Community Cloud's ephemeral disk is never
 relied on.
 """
+import io
 import os
+import re
 import uuid
+import html
+import zipfile
 from datetime import date as _date
 
 import streamlit as st
@@ -20,10 +24,16 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
                    layout="wide")
 
 import bible  # noqa: E402
-from deck_builder import (IMAGE_SLOTS, build_deck,  # noqa: E402
-                          build_section_pptx_bytes, resolve_deck_path,
-                          save_section_deck, saved_section_path,
-                          clear_section_deck)
+from deck_builder import (build_deck,  # noqa: E402
+                          build_section_pptx_bytes, clear_section_deck,
+                          build_hymn_pptx_bytes, hymn_preview,
+                          prepend_video_slide, resolve_deck_path,
+                          save_section_deck, save_video_meta, save_video_mp4,
+                          saved_section_path, saved_video_meta,
+                          saved_video_mp4)
+from video_deck import (announcements_from_pptx,  # noqa: E402
+                        build_announcements_mp4, build_images_mp4,
+                        build_pptx_slides_mp4)
 from model import DATE_RE, default_week, normalize_week, split_lines  # noqa: E402
 from store import get_store  # noqa: E402
 
@@ -109,6 +119,62 @@ def song_bg_options(current):
     return opts
 
 
+def _bg_picker(wkey, default):
+    """背景圖 selectbox + 上傳存檔 + 預覽 + 可選縮圖列（詩歌敬拜／詩歌回應共用）。"""
+    current = sv(wkey, default)
+    opts = song_bg_options(current)
+    labels = {o: ("（依序：song_bg1…）" if not o
+                  else os.path.basename(o)) for o in opts}
+    st.selectbox("背景圖", opts,
+                 index=opts.index(current) if current in opts else 0,
+                 format_func=lambda o: labels.get(o, o),
+                 key=K(wkey))
+    st.caption("下拉選單僅支援文字，下方縮圖僅供確認所選背景")
+    thumb_cols = st.columns(len(opts) if opts else 1)
+    for col, opt in zip(thumb_cols, opts):
+        with col:
+            chosen = opt == current
+            cand = ""
+            if opt:
+                cand = opt if os.path.isfile(opt) else \
+                    os.path.join(os.getcwd(), opt)
+            name = ("依序 song_bg1…" if not opt
+                    else os.path.splitext(os.path.basename(opt))[0])
+            if os.path.isfile(cand):
+                st.image(cand, width=84, caption=("✓ " + name if chosen else name))
+            else:
+                st.markdown(
+                    '<div style="display:flex;align-items:center;'
+                    'justify-content:center;height:63px;border:'
+                    + ("2px solid var(--accent);" if chosen else "1px dashed var(--line);")
+                    + 'border-radius:8px;color:'
+                    + ("var(--accent);font-weight:700;" if chosen else "var(--muted);")
+                    + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
+                    '</div>', unsafe_allow_html=True)
+    up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
+                          "可供所有詩歌選擇）",
+                          type=["jpg", "jpeg", "png"],
+                          key=K(wkey + "_bgupload"))
+    if up is not None:
+        ext = ".png" if (up.name or "").lower().endswith(".png") else ".jpg"
+        path = os.path.join(os.getcwd(), "media",
+                            "song_bg_%s%s" % (uuid.uuid4().hex[:8], ext))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(up.getbuffer())
+        st.session_state[K(wkey)] = os.path.relpath(path, os.getcwd())
+        st.rerun()
+    st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在選單）；"
+               "上傳的圖片只存本機，要放上 Cloud 請把 media/ 一起提交到 Git。")
+    if current:
+        cand = current if os.path.isfile(current) else \
+            os.path.join(os.getcwd(), current)
+        if os.path.isfile(cand):
+            st.image(cand, caption="背景預覽：" + os.path.basename(cand),
+                     width=260)
+    return current
+
+
 def section_source(upload, name, section, date, use_saved):
     """Where a section's slides will come from, for the readiness indicator."""
     if upload is not None:
@@ -134,6 +200,172 @@ def section_ready(section, name_key, label):
         return (f"✅ 已有現成的 {label} .pptx（已上載／已儲存），"
                 "製成整場時以該檔案為準。")
     return None
+
+
+def section_deck_panel(sec_key, build_sec, save_sec, label, dl_name,
+                       btn=None, widget=None):
+    """Section A uploader + section B '產生獨立 pptx' button, moved into the
+    wizard steps. Uses the same session keys the merge flow reads
+    (`build_<widget>`, `sec_bytes_<sec_key>`), so 來源狀態 and 製成整場投影片
+    keep working regardless of which tab/step is active."""
+    st.file_uploader(
+        f"上載 {label} .pptx（上載合併；留空則用網頁編輯內容編譯）",
+        type=["pptx"], key=K("build_" + (widget or sec_key)))
+    if not btn:
+        return
+    bc1, bc2 = st.columns(2)
+    if bc1.button(btn, use_container_width=True, key=K(f"genppt_{sec_key}")):
+        try:
+            data, _count = build_section_pptx_bytes(
+                build_sec, assemble_week(DATE))
+            path = save_section_deck(save_sec, DATE, data)
+            st.session_state[K(f"sec_bytes_{sec_key}")] = data
+            st.session_state[K(f"sec_date_{sec_key}")] = DATE
+            st.toast("已產生並儲存 "
+                     + (os.path.basename(path) if path else "已產生"))
+        except Exception as exc:
+            st.error(f"產生失敗：{exc}")
+    b = st.session_state.get(K(f"sec_bytes_{sec_key}"))
+    if b and st.session_state.get(K(f"sec_date_{sec_key}")) == DATE:
+        bc2.download_button(
+            f"⬇️ 下載 {label} .pptx", data=b, file_name=dl_name,
+            mime="application/vnd.openxmlformats-officedocument"
+                 ".presentationml.presentation",
+            use_container_width=True)
+
+
+def _finalize_stamp(key, label):
+    """Checkbox that 'stamps' a section as finalized (persists with the week)."""
+    st.markdown(
+        "<style>"
+        '[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] p,'
+        '[data-testid="stAlert"] p {'
+        "font-size:1.25rem;"
+        "}</style>",
+        unsafe_allow_html=True)
+    st.write("")
+    marked = st.checkbox(f"✔️ 標記「{label}」此節為定稿（蓋章）",
+                         value=sv(key, False), key=K(key))
+    if marked:
+        st.success(f"📌「{label}」已標記為定稿 —— 內容以目前編輯為準。")
+
+
+def parse_slide_numbers(text):
+    """Parse comma-separated (and/or dash-ranged) 1-based slide numbers into
+    a list, preserving input order and dropping duplicates/invalid parts."""
+    out, seen = [], set()
+    for part in str(text or "").split(","):
+        part = part.strip().replace("–", "-")
+        if not part or "-" not in part:
+            try:
+                i = int(part)
+            except (TypeError, ValueError):
+                continue
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+            continue
+        a, _, b = part.partition("-")
+        try:
+            lo, hi = int(a), int(b)
+        except (TypeError, ValueError):
+            continue
+        if hi < lo:
+            lo, hi = hi, lo
+        for i in range(lo, hi + 1):
+            if i not in seen:
+                seen.add(i)
+                out.append(i)
+    return out
+
+
+class ZipSlideImage:
+    """A slide image inside an uploaded ZIP: keeps the slide number parsed
+    from its filename plus the raw bytes for MP4 encoding, so the user's
+    投影片編號 input matches the numbers in the filenames."""
+
+    __slots__ = ("num", "name", "_blob")
+
+    def __init__(self, num, name, blob):
+        self.num, self.name, self._blob = num, name, blob
+
+    def getvalue(self):
+        return self._blob
+
+
+def video_poster_png(mp4_bytes):
+    """Extract the MP4's first frame as PNG poster bytes; falls back to a
+    navy placeholder so embedding never fails on a codec hiccup."""
+    try:
+        import imageio.v2 as iio
+        import numpy as np
+        from PIL import Image
+        reader = iio.get_reader(io.BytesIO(mp4_bytes))
+        frame = reader.get_data(0)
+        reader.close()
+        img = Image.fromarray(np.asarray(frame)).convert("RGB")
+    except Exception:
+        img = None
+    if img is None:
+        from PIL import Image as _Image
+        img = _Image.new("RGB", (1920, 1080), (17, 36, 74))
+    bio = io.BytesIO()
+    img.save(bio, "PNG")
+    return bio.getvalue()
+
+
+def build_video_bytes(src_kind, src_items, zip_map, src_pptx_bytes,
+                      nums, secs, fpsv, ann_images=None, progress=None):
+    """Rebuild the announcements MP4 from the section-D source state.
+    Returns (mp4_bytes, None) on success or (None, error_message)."""
+    if src_kind == "zip":
+        sel = [n for n in parse_slide_numbers(nums) if n in zip_map]
+        bad = [n for n in parse_slide_numbers(nums) if n not in zip_map]
+    else:
+        sel = [n for n in parse_slide_numbers(nums)
+               if 1 <= n <= len(src_items)]
+        bad = [n for n in parse_slide_numbers(nums)
+               if not 1 <= n <= len(src_items)]
+    if not parse_slide_numbers(nums):
+        return None, "請輸入至少一個編號（例如 1,3,5）。"
+    if bad:
+        return None, "以下編號沒有對應的投影片：%s" % ", ".join(map(str, bad))
+    try:
+        if src_kind == "images":
+            data = build_images_mp4(
+                [src_items[i - 1].getvalue() for i in sel],
+                secs_per_slide=secs, fps=fpsv, progress=progress)
+        elif src_kind == "zip":
+            data = build_images_mp4(
+                [zip_map[n] for n in sel],
+                secs_per_slide=secs, fps=fpsv, progress=progress)
+        elif src_kind == "pptx":
+            data = build_pptx_slides_mp4(
+                src_pptx_bytes, [n - 1 for n in sel],
+                secs_per_slide=secs, fps=fpsv, progress=progress)
+        else:
+            zero = [n - 1 for n in sel]
+            imgs = {
+                z: (ann_images[z].getvalue()
+                    if ann_images and z in ann_images else None)
+                for z in zero}
+            data = build_announcements_mp4(
+                src_items, zero, secs_per_slide=secs, fps=fpsv, images=imgs,
+                progress=progress)
+        return data, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def date_from_filename(name):
+    """Find a YYYY.MM.DD / YYYY-MM-DD token anywhere in a filename (prefix or
+    suffix, e.g. `announcements_2026.09.20.pptx`), returning a normalized
+    `YYYY.MM.DD` string, or None when the name carries no date."""
+    m = re.search(r"(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})", str(name or ""))
+    if not m:
+        return None
+    y, mo, d = (int(x) for x in m.groups())
+    return f"{y:04d}.{mo:02d}.{d:02d}"
 
 
 def persist_uploads(date, uploads):
@@ -196,6 +428,8 @@ def _seed_hymns(week):
             "title": h.get("title", ""),
             "subtitle": h.get("subtitle", ""),
             "source": h.get("source", ""),
+            "music": h.get("music", ""),
+            "lyricist": h.get("lyricist", ""),
             "bg": h.get("bg", ""),
             "refrain": "\n".join(h.get("refrain") or []),
             "repeat": bool(h.get("refrain_after_every_verse", True)),
@@ -224,23 +458,21 @@ def _seed_ann(week):
     return out
 
 
-def _seed_fields(date, week):
-    """Seed the scalar editor widgets (refs, font sizes, verse text areas,
-    sermon meta, communion) from a stored/default week.  Without this, saved
-    宣召經文／經文（讀經）等欄位開檔時顯示空白，再儲存就會被清空。"""
+def _seed_values(week, date):
     psalm = week.get("psalm") or {}
     scripture = week.get("scripture") or {}
     sermon = week.get("sermon") or {}
     response = week.get("response") or {}
-    values = {
+    return {
         "psalm_ref": psalm.get("ref", ""),
         "psalm_ref_size": psalm.get("ref_size", 48),
         "psalm_font_size": psalm.get("font_size", 44),
         "psalm_verses": "\n".join(psalm.get("verses") or []),
         "hymn_font_max": week.get("hymn_font_max", 54),
-        "hymn_font_min": week.get("hymn_font_min", 36),
+        "hymn_font_min": week.get("hymn_font_min", 44),
         "hymn_margin_in": week.get("hymn_margin_in", 0.83),
         "hymn_text_shadow": bool(week.get("hymn_text_shadow", True)),
+        "hymns_finalized": bool(week.get("hymns_finalized", False)),
         "scripture_ref": scripture.get("ref", ""),
         "scripture_ref_size": scripture.get("ref_size", 48),
         "scripture_font_size": scripture.get("font_size", 44),
@@ -255,11 +487,62 @@ def _seed_fields(date, week):
         "resp_title": response.get("title", ""),
         "resp_subtitle": response.get("subtitle", ""),
         "resp_source": response.get("source", ""),
+        "resp_music": response.get("music", ""),
+        "resp_lyricist": response.get("lyricist", ""),
+        "resp_bg": response.get("bg", ""),
         "resp_refrain": "\n".join(response.get("refrain") or []),
         "resp_repeat": bool(response.get("refrain_after_every_verse", True)),
+        "resp_finalized": bool(response.get("finalized", False)),
     }
-    for name, val in values.items():
+
+
+def _seed_fields(date, week):
+    """Seed the scalar editor widgets (refs, font sizes, verse text areas,
+    sermon meta, communion) from a stored/default week.  Without this, saved
+    宣召經文／經文（讀經）等欄位開檔時顯示空白，再儲存就會被清空。"""
+    for name, val in _seed_values(week, date).items():
         st.session_state[f"{date}::{name}"] = val
+
+
+def _restore_lapsed_fields(date, week):
+    """Re-instate stored values for editor widget keys that are absent from
+    session state.  Streamlit deletes widget-created session entries as soon
+    as the widget leaves the rendered tree (e.g. switching wizard steps), so a
+    field whose step is not active would otherwise read as empty and wipe the
+    stored week on the next save.  setdefault only fills missing keys, leaving
+    values the user is currently editing untouched."""
+    for name, val in _seed_values(week, date).items():
+        st.session_state.setdefault(f"{date}::{name}", val)
+    hymns = week.get("hymns") or []
+    for i, h in enumerate(st.session_state.get(f"{date}::ui_hymns") or []):
+        sw = hymns[i] if i < len(hymns) else {}
+        base = f"{date}::hymn_{h['_id']}_"
+        st.session_state.setdefault(base + "title", sw.get("title", ""))
+        st.session_state.setdefault(base + "subtitle", sw.get("subtitle", ""))
+        st.session_state.setdefault(base + "source", sw.get("source", ""))
+        st.session_state.setdefault(base + "music", sw.get("music", ""))
+        st.session_state.setdefault(base + "lyricist", sw.get("lyricist", ""))
+        st.session_state.setdefault(base + "bg", sw.get("bg", ""))
+        st.session_state.setdefault(base + "refrain",
+                                    "\n".join(sw.get("refrain") or []))
+        st.session_state.setdefault(
+            base + "repeat", bool(sw.get("refrain_after_every_verse", True)))
+        for j, stanza in enumerate(sw.get("verses", [])):
+            st.session_state.setdefault(f"{base}verses_{j}",
+                                        "\n".join(stanza))
+    slides = (week.get("sermon") or {}).get("slides") or []
+    for i, s in enumerate(st.session_state.get(f"{date}::ui_slides") or []):
+        sw = slides[i] if i < len(slides) else {}
+        base = f"{date}::slide_{s['_id']}_"
+        st.session_state.setdefault(base + "title", sw.get("title", ""))
+        st.session_state.setdefault(base + "body",
+                                    "\n".join(sw.get("body") or []))
+    rverses = (week.get("response") or {}).get("verses") or []
+    ui_r = st.session_state.get(f"{date}::ui_resp") or []
+    for j in range(max(len(ui_r), len(rverses), 1)):
+        st.session_state.setdefault(
+            f"{date}::resp_verses_{j}",
+            "\n".join(rverses[j]) if j < len(rverses) else "")
 
 
 def _seed_response_fields(date, week):
@@ -273,8 +556,14 @@ def _seed_response_fields(date, week):
             verses[j] if j < len(verses) else "")
 
 
+@st.cache_data(show_spinner=False, max_entries=64)
+def _cached_week(date):
+    """Current stored/default week for a date (cached; invalidated on save)."""
+    return normalize_week(store.get(date) or default_week(date))
+
+
+week = _cached_week(DATE)
 if f"{DATE}::ui_hymns" not in st.session_state:
-    week = normalize_week(store.get(DATE) or default_week(DATE))
     st.session_state[f"{DATE}::ui_hymns"] = _seed_hymns(week)
     st.session_state[f"{DATE}::ui_slides"] = _seed_slides(week)
     st.session_state[f"{DATE}::ui_ann"] = _seed_ann(week)
@@ -289,11 +578,15 @@ if f"{DATE}::ui_hymns" not in st.session_state:
         st.session_state[base + "title"] = h.get("title", "")
         st.session_state[base + "subtitle"] = h.get("subtitle", "")
         st.session_state[base + "source"] = h.get("source", "")
+        st.session_state[base + "music"] = h.get("music", "")
+        st.session_state[base + "lyricist"] = h.get("lyricist", "")
         st.session_state[base + "bg"] = h.get("bg", "")
         st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
         for j, stanza in enumerate(h.get("stanzas", [])):
             st.session_state[f"{base}verses_{j}"] = stanza
+
+_restore_lapsed_fields(DATE, week)
 
 
 # ── clear-upload signals ────────────────────────────────────────────────────
@@ -303,9 +596,10 @@ if f"{DATE}::ui_hymns" not in st.session_state:
 _SECTION_KEYS = ("songs", "offering", "response", "sermon", "announcements")
 _cleared = False
 for _sec in _SECTION_KEYS:
+    _wkey = "ann" if _sec == "announcements" else _sec
     if st.session_state.get(f"{DATE}::clear_{_sec}"):
-        st.session_state.pop(K("build_" + _sec), None)
-        st.session_state.pop(K("build_" + _sec + "_name"), None)
+        st.session_state.pop(K("build_" + _wkey), None)
+        st.session_state.pop(K("build_" + _wkey + "_name"), None)
         st.session_state.pop(f"{DATE}::uploadsig_{_sec}", None)
         st.session_state.pop(f"{DATE}::clear_{_sec}", None)
         clear_section_deck(_sec, DATE)
@@ -328,6 +622,26 @@ def _del_item(kind, index):
     ui = _get_ui(kind)
     if 0 <= index < len(ui):
         del ui[index]
+
+
+@st.dialog("移除詩歌")
+def _confirm_del_hymn():
+    """Confirmation modal before removing a song (removal is permanent).
+    A button click inside the dialog auto-closes it on rerun."""
+    idx = st.session_state.get(K("del_hymn_pending"), -1)
+    ui = _get_ui("hymns")
+    if not 0 <= idx < len(ui):
+        st.session_state.pop(K("del_hymn_pending"), None)
+        return
+    h = ui[idx]
+    st.markdown(f"確定要移除 **{h.get('title') or '（未命名）'}** 嗎？"
+                "此操作不會被還原。")
+    d1, d2 = st.columns(2)
+    if d1.button("確認移除", type="primary", use_container_width=True):
+        _del_item("hymns", idx)
+        st.session_state.pop(K("del_hymn_pending"), None)
+    if d2.button("取消", use_container_width=True):
+        st.session_state.pop(K("del_hymn_pending"), None)
 
 
 # ---------------------------------------------------------------- assemble --
@@ -358,9 +672,10 @@ def assemble_week(date):
             "verses": split_lines(gv("psalm_verses", "")),
         },
         "hymn_font_max": int(gv("hymn_font_max", 54)),
-        "hymn_font_min": int(gv("hymn_font_min", 36)),
+        "hymn_font_min": int(gv("hymn_font_min", 44)),
         "hymn_margin_in": float(gv("hymn_margin_in", 0.83)),
         "hymn_text_shadow": bool(gv("hymn_text_shadow", True)),
+        "hymns_finalized": bool(gv("hymns_finalized", False)),
         "hymns": [assemble_hymn(date, h) for h in ui_hymns],
         "scripture": {
             "ref": gv("scripture_ref", ""),
@@ -387,9 +702,13 @@ def assemble_week(date):
             "title": gv("resp_title", ""),
             "subtitle": gv("resp_subtitle", ""),
             "source": gv("resp_source", ""),
-            "refrain": split_lines(gv("resp_refrain", "")) or None,
-            "refrain_after_every_verse": bool(gv("resp_repeat", True)),
+            "music": gv("resp_music", ""),
+            "lyricist": gv("resp_lyricist", ""),
+            "bg": gv("resp_bg", ""),
+            "refrain": None,
+            "refrain_after_every_verse": False,
             "verses": resp_verses,
+            "finalized": bool(gv("resp_finalized", False)),
         },
         "communion": bool(gv("communion", False)),
     }
@@ -398,21 +717,184 @@ def assemble_week(date):
 
 def assemble_hymn(date, ui):
     base = f"{date}::hymn_{ui['_id']}_"
-    refrain = st.session_state.get(base + "refrain", ui.get("refrain", ""))
-    stanzas = []
-    for j in range(max(len(ui.get("stanzas", ["", ])), 1)):
-        txt = st.session_state.get(f"{base}verses_{j}", ui["stanzas"][j])
-        stanzas.append(split_lines(txt))
+    stanza_txt = [st.session_state.get(f"{base}verses_{j}", ui["stanzas"][j])
+                  for j in range(max(len(ui.get("stanzas", ["", ])), 1))]
     return {
         "title": st.session_state.get(base + "title", ui.get("title", "")),
         "subtitle": st.session_state.get(base + "subtitle", ui.get("subtitle", "")),
         "source": st.session_state.get(base + "source", ui.get("source", "")),
+        "music": st.session_state.get(base + "music", ui.get("music", "")),
+        "lyricist": st.session_state.get(base + "lyricist",
+                                        ui.get("lyricist", "")),
         "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
-        "refrain": split_lines(refrain) or None,
-        "refrain_after_every_verse": bool(
-            st.session_state.get(base + "repeat", ui.get("repeat", True))),
-        "verses": stanzas,
+        "refrain": None,
+        "refrain_after_every_verse": False,
+        "verses": [split_lines(t) for t in stanza_txt],
     }
+
+
+def _parse_hymn_paste(text, with_chorus=True):
+    """Split a whole-song paste into (stanzas, refrain, repeat).
+
+    Protocol: blocks are lyric groups separated by blank lines —
+      * 1 blank line → each block becomes a separate 段 (slide)
+      * 2 blank lines before a block → that block is the 副歌 (chorus)
+
+    Lines with no blank gap belong to the same block, so a 導歌＋副歌 kept
+    together reads as one chorus unit.  If the paste marks nothing as 副歌,
+    falls back to treating the most repeated block (or a shared trailing
+    tail) as the 副歌.  A leading verse number on a block (e.g. `1 至聖的
+    主…`, `2. 你縱尊貴…`) is stripped from its first line."""
+    blocks, before = [], []
+    cur, blanks, started = None, 0, False
+    for ln in (text or "").split("\n"):
+        if ln.strip():
+            if cur is not None:
+                cur.append(ln.rstrip())
+            else:
+                before.append(2 if blanks >= 2 else 1 if blanks == 1 else 0)
+                cur = [ln.rstrip()]
+                blanks = 0
+                started = True
+        else:
+            if cur is not None:
+                blocks.append(cur)
+                cur = None
+            if started:
+                blanks += 1
+    if cur is not None:
+        blocks.append(cur)
+
+    for b in blocks:
+        m = re.match(r"^\s*(\d{1,3})[.．、:）)\s]\s*", b[0])
+        if m:
+            b[0] = b[0][m.end():]
+
+    if not with_chorus:
+        return ["\n".join(b) for b in blocks] or [""], "", False
+
+    def std(b):
+        return tuple(" ".join(x.split()) for x in b)
+
+    if not blocks:
+        return [""], "", True
+    if len(blocks) == 1:
+        return ["\n".join(blocks[0])], "", True
+
+    marked = [i for i in range(len(blocks)) if before[i] >= 2]
+    if marked:
+        chorus_i = marked[0]
+        stanzas = ["\n".join(b) for i, b in enumerate(blocks)
+                   if i not in marked]
+        refrain = "\n".join(blocks[chorus_i])
+        repeat = True
+        return (stanzas or [""]), refrain, repeat
+
+    counts = {}
+    for b in blocks:
+        counts[std(b)] = counts.get(std(b), 0) + 1
+    chorus = [b for b in set(counts) if counts[b] > 1]
+    if chorus:
+        key = max(chorus, key=lambda k: (counts[k], len(k)))
+        keep = [b for b in blocks if std(b) != key]
+        refrain = "\n".join([b for b in blocks if std(b) == key][0])
+        repeat = True
+        return (["\n".join(b) for b in keep] or [""]), refrain, repeat
+
+    tail_len = max((i for i in range(min(len(b) for b in blocks), 0, -1)
+                    if len({std(b[-i:]) for b in blocks}) == 1), default=0)
+    if tail_len >= 2:
+        refrain = "\n".join(blocks[0][-tail_len:])
+        keep = [b[:-tail_len] for b in blocks]
+        return (["\n".join(b) for b in keep if b] or [""]), refrain, True
+
+    return ["\n".join(b) for b in blocks], "", True
+
+
+def _apply_parsed(uid_kind, uid, text, with_chorus=True):
+    """Run _parse_hymn_paste and write the result into the session widget keys.
+
+    uid_kind: 'hymn' (per-song uid) or 'resp' (single response hymn).
+    uid: hymn `_id` or "" for the response section."""
+    stanzas, refrain, repeat = _parse_hymn_paste(text, with_chorus=with_chorus)
+    if uid_kind == "hymn":
+        base = f"hymn_{uid}_"
+        ui = _get_ui("hymns")
+        h = next((x for x in ui if x.get("_id") == uid), None)
+        if h is not None:
+            h["stanzas"] = stanzas
+            h["refrain"] = refrain
+            h["repeat"] = repeat
+    else:
+        base = "resp_"
+        ui = _get_ui("resp")
+        ui[:] = stanzas
+    for j in range(max(len(stanzas), 1)):
+        st.session_state[K(f"{base}verses_{j}")] = stanzas[j]
+    st.session_state[K(f"{base}refrain")] = refrain
+    st.session_state[K(f"{base}repeat")] = repeat
+    st.session_state[K(f"{base}chorus_applied")] = with_chorus
+    st.rerun()
+
+
+
+def _maybe_reapply_chorus(uid_kind, uid):
+    """If the 副歌辨識正確 checkbox now disagrees with the last applied parse,
+    re-run _apply_parsed with the new setting so each paragraph becomes its
+    own slide (with_chorus=False) or the chorus grouping comes back on."""
+    base = f"hymn_{uid}_" if uid_kind == "hymn" else "resp_"
+    cur = st.session_state.get(K(f"{base}chorus_ok"))
+    applied = st.session_state.get(K(f"{base}chorus_applied"))
+    paste = st.session_state.get(K(f"{base}paste"), "")
+    if cur is not None and applied is not None and cur != applied and paste.strip():
+        _apply_parsed(uid_kind, uid, paste, with_chorus=cur)
+
+
+def _hymn_preview_html(preview):
+    """Inline HTML cards summarising the generated slides of one hymn."""
+    cards = []
+    for i, sl in enumerate(preview, 1):
+        body = []
+        for line, pt in sl["lines"]:
+            sz = (f" <span style='color:var(--muted);font-size:.72em'>· "
+                  f"{pt}pt</span>" if pt else "")
+            body.append(f"<div>{html.escape(line)}{sz}</div>")
+        if sl["bg"]:
+            body.append("<div style='color:var(--muted);font-size:.72em'>"
+                        "▲ 自訂背景圖</div>")
+        if not body:
+            body.append("<div style='color:var(--muted);font-size:.8rem'>"
+                        "（空白）</div>")
+        cards.append(
+            '<div style="border:1px solid var(--line);border-radius:10px;'
+            'padding:.55rem .7rem;min-width:170px;max-width:240px;'
+            'flex:1 1 170px;background:#fff">'
+            f'<div style="font-weight:700;font-size:.8rem;color:var(--accent);'
+            f'border-bottom:1px solid var(--line);padding-bottom:.3rem;'
+            f'margin-bottom:.4rem">Slide {i}</div>'
+            + "".join(body) + "</div>")
+    return ('<div style="display:flex;flex-wrap:wrap;gap:10px">'
+            + "".join(cards) + "</div>")
+
+
+def _render_hymn_preview(uid, title):
+    """Show the generated single-hymn pptx preview + download (if any)."""
+    pbytes = st.session_state.get(K(f"hymn_{uid}_preview_data"))
+    if not pbytes:
+        return
+    count = st.session_state.get(K(f"hymn_{uid}_preview_count"), 0)
+    st.caption(f"已產生 {count} 頁（含標題卡）。文字示意為實際投影片內容，"
+               "背景／字型以開啟檔為準。")
+    st.markdown(st.session_state.get(K(f"hymn_{uid}_preview_html"), ""),
+                unsafe_allow_html=True)
+    st.download_button(
+        "⬇️ 下載這首詩歌的 pptx",
+        data=pbytes,
+        file_name="hymn_{}_{}.pptx".format(
+            re.sub(r'[\\/:*?"<>|]+', "_", title) or uid, DATE),
+        mime="application/vnd.openxmlformats-officedocument"
+             ".presentationml.presentation",
+        key=K(f"hymn_{uid}_preview_dl"))
 
 
 def assemble_ann(date, ui):
@@ -436,7 +918,7 @@ _CSS = """
   --accent:#3F5B8B; --accent-2:#5E76A8; --accent-soft:#EEF2F9;
   --ink:#1E2430; --muted:#6B7480; --line:#E3E7EE;
 }
-.block-container { padding-top:2.4rem; padding-bottom:3rem; max-width:1180px; }
+.block-container { padding-top:2.4rem; padding-bottom:3rem; max-width:1500px; }
 #MainMenu, footer { visibility:hidden; }
 
 [data-testid="stSidebar"] {
@@ -463,7 +945,10 @@ _CSS = """
 .sec-sub { color:var(--muted); font-size:.85rem; margin:-.3rem 0 .5rem 2.3rem; }
 
 .stButton > button, .stDownloadButton > button {
-  border-radius:10px; font-weight:600; }
+  border-radius:10px; font-weight:600; white-space:nowrap; }
+[data-testid="stSidebar"] .stButton > button,
+[data-testid="stSidebar"] .stDownloadButton > button {
+  white-space:normal; }
 .stButton > button[kind="primary"] {
   box-shadow:0 4px 14px rgba(63,91,139,.28); }
 [data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div {
@@ -532,7 +1017,7 @@ def _fetch_into(ref_key, target_key, section=None):
             st.cache_data.clear()
         except Exception as exc:
             st.session_state[err_key] = (
-                f"已載入，但儲存到試算表失敗：{exc}；請另按「儲存目前內容」")
+                f"已載入，但儲存到 Google Sheet 失敗：{exc}；請另按「儲存目前內容」")
             st.session_state[info_key] = ""
 
 
@@ -548,6 +1033,47 @@ def _pick_book(select_key, ref_key):
     st.session_state[select_key] = None
 
 
+VERSION_OPTIONS = ["和合本", "和合本2010（和修版）", "新譯本"]
+VERSION_NOTE = {"和合本": "和合本",
+                "和合本2010（和修版）": "和合本2010", "新譯本": "新譯本"}
+
+
+def _strip_ref_note(ref):
+    """Remove a trailing `（版本）` / `(版本)` note from a reference."""
+    s = str(ref).strip()
+    for o, c in (("（", "）"), ("(", ")")):
+        if s.endswith(c) and o in s:
+            return s[:s.rfind(o)].strip()
+    return s
+
+
+def _ref_version_index(ref):
+    """Index into VERSION_OPTIONS matching the note currently on the ref (0)."""
+    s = str(ref).strip()
+    for o, c in (("（", "）"), ("(", ")")):
+        if s.endswith(c) and o in s:
+            note = s[s.rfind(o) + 1:-1].strip()
+            for i, opt in enumerate(VERSION_OPTIONS):
+                if note == VERSION_NOTE[opt]:
+                    return i
+            break
+    return 0
+
+
+def _pick_version(select_key, ref_key, target_key=None, section=None):
+    """Version radio callback: set/replace the `（版本）` note on the 出處 field
+    then auto-refetch the 內容 (like the fhl.net button) in that translation."""
+    label = st.session_state.get(select_key)
+    if not label:
+        return
+    note = f"（{VERSION_NOTE[label]}）"
+    ref = _strip_ref_note(st.session_state.get(ref_key) or "")
+    st.session_state[ref_key] = f"{ref}{note}" if ref else ""
+    st.session_state[select_key] = None
+    if ref and target_key:
+        _fetch_into(ref_key, target_key, section)
+
+
 def _fetch_status(name):
     err = sv(name + "__err", "")
     if err:
@@ -559,6 +1085,199 @@ def _fetch_status(name):
 
 
 # Wizard steps for the 編輯內容 tab — filled top to bottom, one at a time.
+def _saved_mp4_bytes(date):
+    """Bytes of a previously generated 家事MP4 for `date`, or None."""
+    path = saved_video_mp4(date)
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def render_video_panel(ns="", num="D",
+                       title="🎞 家事分享投影片 → MP4"):
+    """The section-D MP4 panel, reusable in the 「製作成投影片」 tab (D) and as
+    wizard step 9 (s9).  `ns` namespaces widget keys so both panels can render
+    in the same run; the produced MP4 is stored under the shared video_data key
+    so the sidebar 製成 flow always sees it."""
+    section_header(num, title,
+                   "上載 PNG/JPG 圖片或 ZIP，或選用週期內容，只取部分項目產製影片")
+    st.caption("投影片在 **Server 端**以 Pillow 製成 H.264 影片"
+               "（純 Python，雲端可執行，不佔本機軟體）。")
+    ann_vsnap = st.session_state.get(K("video_snap_s9")) or {}
+    ann_pptx = ((ann_vsnap.get("pptx") if ann_vsnap.get("kind") == "pptx"
+                 else None) or st.session_state.get(K("build_ann")))
+    ui_ann = _get_ui("ann")
+    ann_images = {}
+    if ui_ann:
+        for i, a in enumerate(ui_ann):
+            if a.get("mode") == "image":
+                up = st.session_state.get(K(f"build_annimg_{i}"))
+                if up is not None:
+                    ann_images[i] = up
+    video_imgs = st.file_uploader(
+        "① 直接上載 PNG/JPG 圖片（一檔一頁）——最精確，畫面即所見",
+        type=["png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True, key=K(f"video_imgs{ns}"))
+    zip_file = st.file_uploader(
+        "② 或 ZIP（內含投影片圖片；檔名編號 = 投影片編號，如 slide_1.png）",
+        type=["zip"], key=K(f"video_zip{ns}"))
+    vdate = date_from_filename(
+        getattr(ann_pptx, "name", "") if ann_pptx is not None else "")
+    src_kind, src_items, src_pptx_bytes = "none", [], None
+    zip_map = {}
+    if video_imgs:
+        src_kind = "images"
+        src_items = [u for u in video_imgs]
+        st.caption(f"使用上載圖片：{len(src_items)} 張，一檔一頁。")
+    elif zip_file is not None:
+        src_kind = "zip"
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_file.getvalue())) as zf:
+                entries = []
+                for zi in zf.infolist():
+                    if zi.is_dir() or "__MACOSX/" in zi.filename \
+                            or ".DS_Store" in zi.filename:
+                        continue
+                    base = zi.filename.rsplit("/", 1)[-1].lower()
+                    if not (base.endswith(".png") or base.endswith(".jpg")
+                            or base.endswith(".jpeg")
+                            or base.endswith(".webp")):
+                        continue
+                    entries.append((zi.filename, zf.read(zi)))
+                if not entries:
+                    st.caption("ZIP 內沒有 PNG/JPG/WEBP 圖片。")
+                else:
+                    maxnum = 0
+                    for name, _b in entries:
+                        m = re.search(r"(\d+)", name.rsplit("/", 1)[-1])
+                        if m:
+                            maxnum = max(maxnum, int(m.group(1)))
+                    nextnum = maxnum + 1
+                    for name, blob in entries:
+                        m = re.search(r"(\d+)", name.rsplit("/", 1)[-1])
+                        num = int(m.group(1)) if m else None
+                        if num is None:
+                            num = nextnum
+                            nextnum += 1
+                        if num in zip_map:
+                            continue           # keep the first
+                        zip_map[num] = blob
+                        src_items.append(ZipSlideImage(
+                            num, name.rsplit("/", 1)[-1], blob))
+                    src_items.sort(key=lambda z: z.num)
+                    st.caption(f"ZIP：{len(src_items)} 張圖片，"
+                               "檔名編號 = 投影片編號（按編號排序）。")
+        except Exception as exc:
+            st.caption(f"無法讀取 ZIP：{exc}")
+            src_items = []
+            src_kind = "none"
+    else:
+        src_fname = (getattr(ann_pptx, "name", "")
+                     if ann_pptx is not None else "")
+        saved_ann_path = saved_section_path("announcements", DATE)
+        cur_ann = (assemble_week(DATE).get("announcements") or [])
+        if ann_pptx is not None:
+            try:
+                src_pptx_bytes = ann_pptx.getvalue()
+                src_items = announcements_from_pptx(src_pptx_bytes)
+                src_kind = "pptx"
+                st.caption(f"已上載 **{src_fname}**：{len(src_items)} 張，"
+                           "以檔案頁面原貌產製（不受日期限制）。")
+            except Exception as exc:
+                st.caption(f"無法讀取已上載檔 {src_fname}：{exc}")
+                src_items = []
+        elif saved_ann_path:
+            try:
+                with open(saved_ann_path, "rb") as fh:
+                    src_pptx_bytes = fh.read()
+                src_items = announcements_from_pptx(src_pptx_bytes)
+                src_kind = "pptx"
+                st.caption(f"使用已儲存 announcements_{DATE}.pptx："
+                           f"{len(src_items)} 張。")
+            except Exception as exc:
+                st.caption(f"無法讀取已儲存檔（announcements_{DATE}.pptx）：{exc}")
+                src_items = []
+        elif vdate:
+            wk_video = normalize_week(store.get(vdate) or default_week(vdate))
+            src_items = wk_video.get("announcements") or []
+            src_kind = "content"
+            if not src_items and cur_ann:
+                src_items = cur_ann
+                st.caption(f"檔名含日期 **{vdate}**，但該日沒有家事分享內容，"
+                           f"退回目前日期 **{DATE}** 的內容。")
+            else:
+                st.caption(f"已上載檔名含日期 **{vdate}**（不需等於目前日期），"
+                           "使用該日的家事分享內容。")
+        else:
+            src_items = cur_ann
+            if not src_items:
+                src_kind = "none"
+            else:
+                src_kind = "content"
+                if src_fname:
+                    st.caption(f"檔名未含日期（{src_fname}），使用目前日期 "
+                               f"{DATE} 的內容。")
+    st.session_state[K(f"video_snap{ns}")] = {
+        "kind": src_kind, "items": src_items, "zip_map": zip_map,
+        "pptx": src_pptx_bytes, "vdate": vdate, "ns": ns,
+        "nums_auto": ",".join(
+            str(getattr(z, "num", i + 1)) if src_kind == "zip" else str(i + 1)
+            for i, z in enumerate(src_items))}
+    if src_kind == "none":
+        st.caption("沒有可用的家事分享來源：請上載圖片、ZIP、家事分享 .pptx，"
+                   "或在「✏️ 編輯內容 → 家事分享」輸入至少一項。")
+        st.text_input("投影片編號", value="", disabled=True,
+                      key=K(f"video_nums_off{ns}"),
+                      help="上載圖片／ppt 或輸入家事分享後即可產製")
+    else:
+        v1, v2, v3 = st.columns(3)
+        nums = v1.text_input(
+            "投影片編號", value=",".join(str(i + 1)
+                                      for i in range(len(src_items))),
+            key=K(f"video_nums{ns}"), placeholder="例如：1,3,5 或 1-3,5")
+        secs = v2.number_input("每張停留秒數", 1.0, 30.0, 10.0, step=1.0,
+                               key=K(f"video_secs{ns}"))
+        fpsv = v3.select_slider("fps", options=[15, 20, 24, 30], value=15,
+                                key=K(f"video_fps{ns}"))
+        if st.button("🎞 產生影片（MP4）", key=K(f"video_gen{ns}"),
+                     type="primary"):
+            bar = st.progress(0.0, text="準備產製 MP4…")
+            data, err = build_video_bytes(
+                src_kind, src_items, zip_map, src_pptx_bytes,
+                nums, secs, fpsv, ann_images,
+                progress=lambda f: bar.progress(
+                    f, text=f"產製 MP4… {f * 100:.0f}%"))
+            if err:
+                bar.empty()
+                st.error(err)
+            elif data is None:
+                bar.empty()
+                st.error("沒有可用的影片來源。")
+            else:
+                bar.progress(1.0, text="MP4 已產製完成")
+                st.session_state[K("video_data")] = data
+                save_video_mp4(DATE, data)
+        vid = st.session_state.get(K("video_data")) or _saved_mp4_bytes(DATE)
+        if vid:
+            st.download_button(
+                "⬇️ 下載 MP4", data=vid,
+                file_name=f"announcements_{vdate or DATE}.mp4",
+                mime="video/mp4", key=K(f"video_dl{ns}"))
+            st.caption(f"已產生影片（約 {len(vid) / 1048576:.1f} MB）。")
+            first_toggle = st.checkbox(
+                "把影片併入整場投影片的第一頁\n"
+                "（自動循環播放，直到點擊下一頁）",
+                value=True, key=K(f"video_first_deck{ns}"))
+            save_video_meta(DATE, bool(first_toggle))
+            if first_toggle:
+                st.caption("記得按左上「製成完整投影片」的按鈕，"
+                           "影片才會被放入第一頁。")
+
+
 EDIT_STEPS = [
     ("宣召經文", "宣召經文"),
     ("詩歌敬拜（Hymns）", "詩歌"),
@@ -568,6 +1287,7 @@ EDIT_STEPS = [
     ("詩歌回應（Response Hymn）", "詩歌回應"),
     ("聖餐（Communion）", "聖餐"),
     ("家事分享（Announcements）", "家事分享"),
+    ("家事分享 → MP4（影片）", "家事MP4"),
 ]
 
 
@@ -580,8 +1300,8 @@ def _edit_step():
 
 def _step_marker(step):
     st.progress(step / len(EDIT_STEPS),
-                text=f"第 {step} / {len(EDIT_STEPS)} 步驟 · {EDIT_STEPS[step - 1][0]}，"
-                     f"每步驟完成後按「下一步」繼續")
+                text=f"第 {step} / {len(EDIT_STEPS)} 步驟 · "
+                     f"{EDIT_STEPS[step - 1][0]}")
     cols = st.columns(len(EDIT_STEPS))
     for i, (_title, short) in enumerate(EDIT_STEPS):
         idx = i + 1
@@ -591,7 +1311,7 @@ def _step_marker(step):
             if idx != step:
                 st.session_state[K("edit_step")] = idx
                 st.rerun()
-    st.caption("依編號由左到右填寫；按上方數字可跳至該節。")
+    st.caption("頂端按鈕可按**任意順序**填寫，不需要依序完成。")
 
 
 def _step_nav(step):
@@ -611,6 +1331,97 @@ def _step_nav(step):
     if nxt:
         st.session_state[K("edit_step")] = step + 1
         st.rerun()
+
+
+def _scripture_editor(prefix, section=None):
+    """讀經經文 editor — step 4 of the main wizard, or the standalone
+    經文投影片 flow. Field keys are `{prefix}_{field}`. With `section`
+    ("scripture"), the fhl.net fetch also auto-saves to the store; the
+    standalone flow passes section=None so nothing touches Google Sheets."""
+    st.selectbox("書卷", bible.BOOK_NAMES, index=None,
+                 placeholder="選擇書卷（也可直接在下面輸入出處）",
+                 format_func=lambda n: f"{n}（{bible.book_code(n)} / "
+                 f"{bible.book_en(n)}）",
+                 key=K(f"{prefix}_book"),
+                 on_change=_pick_book,
+                 args=(K(f"{prefix}_book"), K(f"{prefix}_ref")))
+    st.caption("選書卷會自動填入出處；也可直接在下面「出處」欄鍵入，例如 "
+               "詩篇 34:1-3")
+    st.text_input("出處", value=sv(f"{prefix}_ref"),
+                  key=K(f"{prefix}_ref"),
+                  placeholder="羅馬書 12:1-8")
+    st.radio("譯本版本", VERSION_OPTIONS, horizontal=True,
+             index=_ref_version_index(sv(f"{prefix}_ref")),
+             key=K(f"{prefix}_version"), on_change=_pick_version,
+             args=(K(f"{prefix}_version"), K(f"{prefix}_ref"),
+                   K(f"{prefix}_verses"), section))
+    st.button("從 fhl.net 聖經網輸入", type="primary",
+              key=K(f"{prefix}_load"), use_container_width=True,
+              on_click=_fetch_into,
+              args=(K(f"{prefix}_ref"), K(f"{prefix}_verses"), section))
+    st.caption("支援多卷書：以 `；` 分隔（如 詩篇 34:1-3；馬太福音 6:9-13）")
+    c1, c2 = st.columns(2)
+    c1.number_input("出處字型(pt)", value=48, min_value=20,
+                    max_value=90, key=K(f"{prefix}_ref_size"))
+    c2.number_input("內文字型(pt)", value=44, min_value=44,
+                    max_value=90, key=K(f"{prefix}_font_size"))
+    st.text_area("內容（貼上全部經文，自動分頁）",
+                 value=sv(f"{prefix}_verses"),
+                 key=K(f"{prefix}_verses"), height=200)
+    _fetch_status(f"{prefix}_verses")
+
+
+def _render_scr_flow():
+    """📜 經文投影片（獨立流程）— a 1-step page separate from the main wizard.
+    Content lives under its own `scrflow_*` session keys (never assembled into
+    the week or saved to the sheet); the generate button is inside the step."""
+    if st.button("← 返回主流程", key=K("scr_flow_back")):
+        st.session_state["scr_flow"] = False
+        st.rerun()
+    st.markdown('<div class="hero hero-sm"><div class="hero-date">📜 經文投影片'
+                '<span class="brand-tail">（獨立流程）</span></div>'
+                '<div class="hero-sub">單一步驟：只依輸入的經文製成 pptx · '
+                '內容不會儲存至 Google Sheet</div></div>', unsafe_allow_html=True)
+
+    st.progress(1.0, text="第 1 / 1 步驟 · 經文投影片")
+    st.divider()
+
+    with st.container(border=True):
+        section_header("1", "經文投影片", "輸入出處一鍵載入，或直接貼上整段經文")
+        _scripture_editor("scrflow")
+
+    st.divider()
+    build_clicked = st.button("📜 製成經文投影片 pptx", type="primary",
+                              use_container_width=True,
+                              key=K("scrflow_build"))
+    if build_clicked:
+        try:
+            week = normalize_week({
+                "date": DATE,
+                "scripture": {
+                    "ref": sv("scrflow_ref", ""),
+                    "ref_size": int(sv("scrflow_ref_size", 48) or 48),
+                    "font_size": int(sv("scrflow_font_size", 44) or 44),
+                    "verses": split_lines(sv("scrflow_verses", "")),
+                },
+            })
+            data, count = build_section_pptx_bytes("scripture", week)
+            st.session_state["scrflow_bytes"] = data
+            st.session_state["scrflow_count"] = count
+            st.success(f"完成：{count} 頁（獨立流程，只含讀經經文）")
+        except Exception as exc:
+            st.error(f"製成失敗：{exc}")
+
+    data = st.session_state.get("scrflow_bytes")
+    if data:
+        st.download_button(
+            "⬇️ 下載經文投影片 pptx",
+            data=data,
+            file_name=f"scripture_{DATE}.pptx",
+            mime="application/vnd.openxmlformats-officedocument"
+                 ".presentationml.presentation",
+        )
+        st.caption("此獨立檔案不會被「製成整場投影片」讀取或合併。")
 
 
 _inject_css()
@@ -663,20 +1474,24 @@ with st.sidebar:
     st.markdown('<div class="sec-title" style="font-size:1rem">📜 經文投影片'
                 '<span class="brand-tail">（獨立流程）</span></div>',
                 unsafe_allow_html=True)
-    st.caption("只把「經文（讀經）」內容製成 pptx；\n"
-               "不屬於整場崇拜投影片流程，也不會被合併使用。")
-    scr_clicked = st.button("📜 製成經文（讀經）投影片",
-                            use_container_width=True,
-                            key=K("generate_scripture"))
-    scr_slot = st.container()
+    st.caption("單一步驟：只輸入「經文（讀經）」內容製成 pptx；\n"
+               "不會儲存到 Google Sheet，也不屬於整場流程。")
+    if st.button("📜 開啟「經文投影片」獨立流程",
+                 use_container_width=True, key=K("enter_scr_flow")):
+        st.session_state["scr_flow"] = True
+        st.rerun()
 
 # ------------------------------------------------------------------ tabs --
+if st.session_state.get("scr_flow"):
+    _render_scr_flow()
+    st.stop()
+
 tab_edit, tab_build = st.tabs(["✏️ 編輯內容", "📽 製作成投影片"])
 
 with tab_edit:
     st.markdown(
         f'<div class="hero"><div class="hero-date">主日：{DATE}</div>'
-        f'<div class="hero-sub">崇拜投影片編輯器 · 內容自動儲存至 Google 試算表'
+        f'<div class="hero-sub">崇拜投影片編輯器 · 內容自動儲存至 Google Sheet'
         f'</div></div>', unsafe_allow_html=True)
 
     step = _edit_step()
@@ -687,51 +1502,24 @@ with tab_edit:
     if step == 1:
         with st.container(border=True):
             section_header("1", "宣召經文", "貼上整段經文，自動分頁")
-            ref_row = st.columns([3, 1.4, 0.6, 2.2], vertical_alignment="bottom")
-            ref_row[0].text_input("出處", value=sv("psalm_ref"),
-                                  key=K("psalm_ref"),
-                                  placeholder="詩篇 34:1-3")
-            ref_row[1].selectbox("書卷（加入出處）", bible.BOOK_NAMES,
-                                 index=None, placeholder="書卷",
-                                 key=K("psalm_book"), on_change=_pick_book,
-                                 args=(K("psalm_book"), K("psalm_ref")))
-            ref_row[2].button("⬇️", type="primary", key=K("psalm_load"),
-                              on_click=_fetch_into,
-                              args=(K("psalm_ref"), K("psalm_verses"),
-                                    "psalm"),
-                              help="點一下即從 fhl.net 聖經網載入整段經文（並自動儲存）")
-            ref_row[3].caption("一鍵從聖經網載入經文")
-            st.caption("支援多卷書：以 `；` 分隔（如 詩篇 34:1-3；馬太福音 6:9-13）")
-            c1, c2 = st.columns(2)
-            c1.number_input("出處字型(pt)", value=48, min_value=20,
-                            max_value=90, key=K("psalm_ref_size"))
-            c2.number_input("內文字型(pt)", value=44, min_value=44,
-                            max_value=90, key=K("psalm_font_size"))
-            st.text_area("內容（貼上全部經文，自動分頁）",
-                         value=sv("psalm_verses"),
-                         key=K("psalm_verses"), height=200)
-            _fetch_status("psalm_verses")
+            _scripture_editor("psalm", "psalm")
 
     elif step == 2:
         with st.container(border=True):
             section_header("2", "詩歌敬拜（Hymns）")
+            section_deck_panel("songs", "hymns", "songs", "詩歌",
+                               f"songs_slides_{DATE}.pptx",
+                               btn="🎵 產生詩歌投影片")
             ready = section_ready("songs", "build_songs_name", "詩歌")
-            st.caption(ready or "如已有現成的詩歌 .pptx，也可在「📽 製作成投影片」頁"
-                       "上載合併（該節以檔案為準，字型／項目符號沿用來源檔）。")
-            c1, c2, c3 = st.columns(3)
-            c1.number_input("最大字體(pt)", value=54, min_value=20, max_value=54,
-                            key=K("hymn_font_max"))
-            c2.number_input("最小字體(pt)", value=36, min_value=20, max_value=80,
-                            key=K("hymn_font_min"))
-            c3.number_input("左右邊距(吋)", value=0.83, min_value=0.2, max_value=2.0,
-                            step=0.05, key=K("hymn_margin_in"))
-            st.caption("歌詞自動調整字體：在最小～最大之間取能完整放下的"
-                       "最大字體（上限 54pt），並置中對齊。每首詩歌可用下方"
+            st.caption(ready or "以下內容以網頁內容現場編譯；上載 .pptx 時"
+                       "以檔案為準，字型／項目符號沿用來源檔。")
+            st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
+                        value=sv("hymn_text_shadow", True),
+                        key=K("hymn_text_shadow"))
+            st.caption("歌詞固定 **44pt** 置中對齊；**每行只接受 19 個字**"
+                       "（含標點符號），超過會自動換行；投影片中**標點符號以空格"
+                       "取代**（例如「，」「。」→ 空白）。每首詩歌可用下方"
                        "「背景圖」各自指定背景（預設依序 song_bg1.jpg…）。")
-            if st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
-                           value=sv("hymn_text_shadow", True),
-                           key=K("hymn_text_shadow")):
-                pass
 
             for i, h in enumerate(_get_ui("hymns")):
                 uid = h["_id"]
@@ -745,140 +1533,138 @@ with tab_edit:
                                   value=sv(f"hymn_{uid}_subtitle",
                                            h.get("subtitle")),
                                   key=K(f"hymn_{uid}_subtitle"))
-                    st.text_input("來源",
+                    m1, m2, m3 = st.columns(3)
+                    m1.text_input("詩集",
                                   value=sv(f"hymn_{uid}_source", h.get("source")),
                                   key=K(f"hymn_{uid}_source"))
-                    bg_now = sv(f"hymn_{uid}_bg", h.get("bg", ""))
-                    bg_opts = song_bg_options(bg_now)
-                    bg_labels = {o: ("（依序：song_bg1…）" if not o
-                                     else os.path.basename(o)) for o in bg_opts}
-                    st.selectbox("背景圖", bg_opts,
-                                 index=bg_opts.index(bg_now)
-                                 if bg_now in bg_opts else 0,
-                                 format_func=lambda o: bg_labels.get(o, o),
-                                 key=K(f"hymn_{uid}_bg"))
-                    up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
-                                          "可供所有詩歌選擇）",
-                                          type=["jpg", "jpeg", "png"],
-                                          key=K(f"hymn_{uid}_bgupload"))
-                    if up is not None:
-                        ext = ".png" if (up.name or "").lower().endswith(".png") \
-                            else ".jpg"
-                        path = os.path.join(os.getcwd(), "media",
-                                            "song_bg_%s%s" % (uid[:8], ext))
-                        media_dir = os.path.dirname(path)
-                        os.makedirs(media_dir, exist_ok=True)
-                        with open(path, "wb") as fh:
-                            fh.write(up.getbuffer())
-                        st.session_state[K(f"hymn_{uid}_bg")] = \
-                            os.path.relpath(path, os.getcwd())
-                        st.rerun()
-                    st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在選單）；"
-                           "上傳的圖片只存本機，要放上 Cloud 請把 media/"
-                           "一起提交到 Git。")
-                    prev = sv(f"hymn_{uid}_bg", h.get("bg", ""))
-                    if prev:
-                        cand = prev if os.path.isfile(prev) else \
-                            os.path.join(os.getcwd(), prev)
-                        if os.path.isfile(cand):
-                            st.image(cand, caption="背景預覽：" +
-                                     os.path.basename(cand), width=260)
-                    st.text_area("副歌（每行一句，可留空）",
-                                 value=sv(f"hymn_{uid}_refrain", h.get("refrain")),
-                                 key=K(f"hymn_{uid}_refrain"), height=60)
-                    st.checkbox("每段後重覆副歌",
-                                value=sv(f"hymn_{uid}_repeat",
-                                         h.get("repeat", True)),
-                                key=K(f"hymn_{uid}_repeat"))
+                    m2.text_input("曲",
+                                  value=sv(f"hymn_{uid}_music", h.get("music")),
+                                  key=K(f"hymn_{uid}_music"))
+                    m3.text_input("詞",
+                                  value=sv(f"hymn_{uid}_lyricist",
+                                           h.get("lyricist")),
+                                  key=K(f"hymn_{uid}_lyricist"))
+                    _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
+                    st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
+                                 value="", key=K(f"hymn_{uid}_paste"),
+                                 height=100)
+                    st.caption("貼上歌詞後，按下方「匯入為各段」按鈕，"
+                               "即可把整首詩歌切成各段（每段＝一張 slide）。")
+                    if st.button("匯入為各段",
+                                 key=K(f"hymn_{uid}_apply_paste")):
+                        _apply_parsed("hymn", uid,
+                                      st.session_state.get(
+                                          K(f"hymn_{uid}_paste"), ""),
+                                      with_chorus=False)
                     for j in range(max(len(h.get("stanzas", ["", ""])), 1)):
                         st.text_area(f"第 {j + 1} 段（每行一句）",
                                      value=sv(f"hymn_{uid}_verses_{j}",
                                               h["stanzas"][j]
                                               if j < len(h["stanzas"]) else ""),
                                      key=K(f"hymn_{uid}_verses_{j}"), height=90)
+                    st.divider()
+                    pcol1, pcol2 = st.columns([0.42, 0.58])
+                    if pcol1.button("🎬 產生這首詩歌的 slide",
+                                    key=K(f"hymn_{uid}_preview_gen"),
+                                    use_container_width=True):
+                        try:
+                            data, cnt = build_hymn_pptx_bytes(
+                                assemble_week(DATE), assemble_hymn(DATE, h))
+                            st.session_state[K(f"hymn_{uid}_preview_data")] = data
+                            st.session_state[K(f"hymn_{uid}_preview_count")] = cnt
+                            st.session_state[K(f"hymn_{uid}_preview_html")] = \
+                                _hymn_preview_html(hymn_preview(data))
+                        except Exception as exc:
+                            st.error(f"產生失敗：{exc}")
+                    if pcol2.button("🗑 清除預覽",
+                                    key=K(f"hymn_{uid}_preview_clear"),
+                                    use_container_width=True,
+                                    disabled=not st.session_state.get(
+                                        K(f"hymn_{uid}_preview_data"))):
+                        for kk in ("_preview_data", "_preview_count",
+                                   "_preview_html"):
+                            st.session_state.pop(K(f"hymn_{uid}{kk}"), None)
+                        st.rerun()
+                    _render_hymn_preview(uid, h.get("title", ""))
                     c1, c2 = st.columns(2)
                     if c1.button("＋ 新增一段", key=K(f"hymn_{uid}_addstanza")):
                         h["stanzas"].append("")
                     if c2.button("移除這首詩歌", key=K(f"hymn_{uid}_del")):
-                        _del_item("hymns", i)
+                        st.session_state[K("del_hymn_pending")] = i
                         st.rerun()
+            if st.session_state.get(K("del_hymn_pending")) is not None:
+                _confirm_del_hymn()
             if st.button("＋ 新增詩歌", key=K("add_hymn")):
                 _add_item("hymns", {"_id": uuid.uuid4().hex[:8], "title": "",
-                                    "subtitle": "", "source": "", "bg": "",
+                                    "subtitle": "", "source": "", "music": "",
+                                    "lyricist": "", "bg": "",
                                     "refrain": "", "repeat": True,
                                     "stanzas": [""]})
                 st.rerun()
+            _finalize_stamp("hymns_finalized", "詩歌敬拜")
 
     elif step == 3:
         with st.container(border=True):
             section_header("3", "獻詩（Offering）")
+            section_deck_panel("offering", None, "offering", "獻詩", None)
             ready = section_ready("offering", "build_offering_name", "獻詩")
             if ready:
                 st.caption(ready)
             else:
-                st.info("此節只接受現成 .pptx 檔案：請於「📽 製作成投影片」頁的"
-                        "「獻詩」欄上載，製成時以該檔案為準（未上載則此節不加入）。")
+                st.info("此節只接受現成 .pptx：上載後製成整場時以檔案為準；"
+                        "未上載則此節不加入。上載檔在 Server 重啟後可能遺失，"
+                        "請當日完成整場製作。")
 
     elif step == 4:
         with st.container(border=True):
             section_header("4", "讀經經文", "貼上整段經文，自動分頁")
-            sb, rb = st.columns([2, 3], vertical_alignment="bottom")
-            sb.selectbox("書卷", bible.BOOK_NAMES, index=None,
-                         placeholder="選擇書卷", key=K("scripture_book"),
-                         on_change=_pick_book,
-                         args=(K("scripture_book"), K("scripture_ref")))
-            rb.button("從 fhl.net 聖經網輸入", type="primary",
-                      key=K("scripture_load"), use_container_width=True,
-                      on_click=_fetch_into,
-                      args=(K("scripture_ref"), K("scripture_verses"),
-                            "scripture"))
-            st.text_input("出處", value=sv("scripture_ref"),
-                          key=K("scripture_ref"),
-                          placeholder="羅馬書 12:1-8（和合本）")
-            st.caption("支援多卷書：以 `；` 分隔（如 詩篇 34:1-3；馬太福音 6:9-13）")
-            c1, c2 = st.columns(2)
-            c1.number_input("出處字型(pt)", value=48, min_value=20,
-                            max_value=90, key=K("scripture_ref_size"))
-            c2.number_input("內文字型(pt)", value=44, min_value=44,
-                            max_value=90, key=K("scripture_font_size"))
-            st.text_area("內容（貼上全部經文，自動分頁）",
-                         value=sv("scripture_verses"),
-                         key=K("scripture_verses"), height=200)
-            _fetch_status("scripture_verses")
+            _scripture_editor("scripture", "scripture")
 
     elif step == 5:
         with st.container(border=True):
             section_header("5", "講道信息（Sermon）")
+            section_deck_panel("sermon", "sermon", "sermon", "講道",
+                               f"sermon_{DATE}.pptx",
+                               btn="🗣 產生講道投影片")
             ready = section_ready("sermon", "build_sermon_name", "講道")
             if ready:
                 st.caption(ready)
             else:
-                st.info("此節只接受現成 .pptx 檔案：請於「📽 製作成投影片」頁上載，"
-                        "製成時以該檔案為準（此頁無需輸入）。")
+                st.info("此節以現成 .pptx 為準；上載後製成整場時以該檔案為準。"
+                        "上載檔在 Server 重啟後可能遺失，請當日完成整場製作。")
 
     elif step == 6:
         with st.container(border=True):
             section_header("6", "詩歌回應（Response Hymn）",
                            "單首回應詩歌，緊接信息之後（可選）")
+            section_deck_panel("response", "response", "response", "詩歌回應",
+                               f"response_{DATE}.pptx",
+                               btn="🎶 產生詩歌回應投影片")
             ready = section_ready("response", "build_response_name", "詩歌回應")
             st.caption(ready or "此節**可選**：不需要可直接按「下一步」略過。"
                        "要加入時，可填寫以下內容現場編譯；"
-                       "或於「📽 製作成投影片」頁上載現成 .pptx 合併（以檔案為準）。")
+                       "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             ui_resp = st.session_state.setdefault(f"{DATE}::ui_resp", [""])
             for name in ("resp_title", "resp_subtitle", "resp_source",
-                         "resp_refrain"):
+                         "resp_music", "resp_lyricist", "resp_bg"):
                 st.session_state.setdefault(K(name), "")
-            st.session_state.setdefault(K("resp_repeat"), True)
             c1, c2 = st.columns(2)
             c1.text_input("曲名", value=sv("resp_title"), key=K("resp_title"))
             c2.text_input("英文名", value=sv("resp_subtitle"),
                           key=K("resp_subtitle"))
-            st.text_input("來源", value=sv("resp_source"), key=K("resp_source"))
-            st.text_area("副歌（每行一句，可留空）",
-                         value=sv("resp_refrain"), key=K("resp_refrain"),
-                         height=60)
-            st.checkbox("每段後重覆副歌",
-                        value=sv("resp_repeat", True), key=K("resp_repeat"))
+            m1, m2, m3 = st.columns(3)
+            m1.text_input("詩集", value=sv("resp_source"), key=K("resp_source"))
+            m2.text_input("曲", value=sv("resp_music"), key=K("resp_music"))
+            m3.text_input("詞", value=sv("resp_lyricist"),
+                          key=K("resp_lyricist"))
+            _bg_picker("resp_bg", "")
+            st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
+                         value="", key=K("resp_paste"), height=100)
+            st.caption("貼上歌詞後，按下方「匯入為各段」按鈕，"
+                       "即可把整首詩歌切成各段（每段＝一張 slide）。")
+            if st.button("匯入為各段", key=K("resp_apply_paste")):
+                _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
+                              with_chorus=False)
             for j in range(max(len(ui_resp), 1)):
                 st.session_state.setdefault(
                     K(f"resp_verses_{j}"),
@@ -894,6 +1680,7 @@ with tab_edit:
             if c2.button("移除最後一段", key=K("resp_del")) and len(ui_resp) > 1:
                 ui_resp.pop()
                 st.rerun()
+            _finalize_stamp("resp_finalized", "詩歌回應")
 
     elif step == 7:
         with st.container(border=True):
@@ -907,117 +1694,47 @@ with tab_edit:
     elif step == 8:
         with st.container(border=True):
             section_header("8", "家事分享（Announcements）")
+            section_deck_panel("announcements", "announcements",
+                               "announcements", "家事分享",
+                               f"announcements_{DATE}.pptx",
+                               btn="📋 產生家事分享投影片",
+                               widget="ann")
             ready = section_ready("announcements", "build_ann_name", "家事分享")
             if ready:
                 st.caption(ready)
             else:
-                st.info("此節只接受現成 .pptx 檔案：請於「📽 製作成投影片」頁上載，"
-                        "製成時以該檔案為準（此頁無需輸入）。")
+                st.info("此節以現成 .pptx，或以已輸入的家事分享內容編譯；"
+                        "上載後以檔案為準。")
+
+    elif step == 9:
+        with st.container(border=True):
+            render_video_panel("s9", "9")
+        st.caption("產生 MP4 後，按左側「📽 製成整場投影片」即會自動併入"
+                   "整場投影片的第一頁（勾選「併入第一頁」時，自動循環播放）。")
 
     st.divider()
     _step_nav(step)
     if step >= len(EDIT_STEPS):
-        st.success("全部步驟已完成 ✔　下一步：請在瀏覽器上方的頁籤切換到 "
-                   "「📽 製作成投影片」，上載要合併的 pptx 檔案；"
-                   "或直接在左側面板按「📽 製成整場投影片」。")
+        st.success("全部步驟已完成 ✔　在左側面板按「📽 製成整場投影片」，"
+                   "或到「📽 製作成投影片」頁查看「製成選項與來源狀態」。")
 
 with tab_build:
     st.markdown(
         f'<div class="hero hero-sm"><div class="hero-date">製作成投影片</div>'
-        f'<div class="hero-sub">{DATE} · 上載要合併的檔案，或以網頁內容現場編譯'
+        f'<div class="hero-sub">{DATE} · 上載與產生已在「✏️ 編輯內容」各節，'
+        f'此頁檢查來源狀態；或以網頁內容現場編譯'
         f'</div></div>', unsafe_allow_html=True)
 
-    with st.container(border=True):
-        section_header("A", "上載要合併的檔案", "留空的節以網頁內容編譯，可混用")
-        c1, c2, c3 = st.columns(3)
-        songs_pptx = c1.file_uploader("詩歌敬拜 .pptx（上載合併）",
-                                      type=["pptx"], key=K("build_songs"))
-        sermon_pptx = c2.file_uploader("講道信息 .pptx（上載合併）",
-                                       type=["pptx"], key=K("build_sermon"))
-        ann_pptx = c3.file_uploader("家事分享 .pptx（上載合併）",
-                                    type=["pptx"], key=K("build_ann"))
-        o1, o2 = st.columns(2)
-        offering_pptx = o1.file_uploader("獻詩 .pptx（可選，上載合併）",
-                                         type=["pptx"], key=K("build_offering"))
-        response_pptx = o2.file_uploader("詩歌回應 .pptx（可選，上載合併）",
-                                         type=["pptx"],
-                                         key=K("build_response"))
-        st.caption("上載後該節以檔案為準（合併）；留空則用編輯頁內容編譯（可混用）。"
-                   "獻詩未上載則不加入；詩歌回應未上載則以編輯內容編譯。")
-        with st.expander("🔎 或輸入檔名（本機執行時，從 app 資料夾 / "
-                         "data/downloads / ~/Downloads 找到即合併）"):
-            fc1, fc2, fc3 = st.columns(3)
-            songs_name = fc1.text_input(
-                "詩歌檔名", placeholder="songs_slides_2026.09.20.pptx",
-                key=K("build_songs_name"))
-            sermon_name = fc2.text_input(
-                "講道檔名", placeholder="sermon_2026.09.20.pptx",
-                key=K("build_sermon_name"))
-            ann_name = fc3.text_input(
-                "家事分享檔名", placeholder="announcements_2026.09.20.pptx",
-                key=K("build_ann_name"))
-            f1, f2 = st.columns(2)
-            offering_name = f1.text_input(
-                "獻詩檔名", placeholder="offering_2026.09.20.pptx",
-                key=K("build_offering_name"))
-            response_name = f2.text_input(
-                "詩歌回應檔名", placeholder="response_2026.09.20.pptx",
-                key=K("build_response_name"))
-            st.caption("上載優先；兩者皆無則該節用編輯頁內容編譯；"
-                       "檔名找不到會自動回退並提示。")
-
-    # Persist uploaded section decks so the section status survives a page
-    # refresh (Streamlit clears file_uploader state).
-    persist_uploads(DATE, {"songs": songs_pptx, "sermon": sermon_pptx,
-                           "announcements": ann_pptx,
-                           "offering": offering_pptx,
-                           "response": response_pptx})
-
-    with st.container(border=True):
-        section_header("B", "個別產生獨立 pptx", "可下載，也會自動儲存供整場合併")
-        sec_cols = st.columns(4)
-        sec_jobs = [
-            ("🎵 產生詩歌投影片", "hymns", "songs",
-             f"songs_slides_{DATE}.pptx"),
-            ("🗣 產生講道投影片", "sermon", "sermon",
-             f"sermon_{DATE}.pptx"),
-            ("📋 產生家事分享投影片", "announcements", "announcements",
-             f"announcements_{DATE}.pptx"),
-            ("🎶 產生詩歌回應投影片", "response", "response",
-             f"response_{DATE}.pptx"),
-        ]
-        for col, (label, build_sec, save_sec, fname) in zip(sec_cols, sec_jobs):
-            if col.button(label, use_container_width=True):
-                data, _count = build_section_pptx_bytes(build_sec,
-                                                        assemble_week(DATE))
-                st.session_state["sec_bytes"] = data
-                st.session_state["sec_name"] = fname
-                st.session_state["sec_date"] = DATE
-                path = save_section_deck(save_sec, DATE, data)
-                st.toast(f"已產生並儲存 {os.path.basename(path)}"
-                         if path else "已產生")
-
-        sec_bytes = st.session_state.get("sec_bytes")
-        if sec_bytes and st.session_state.get("sec_date") == DATE:
-            st.download_button(
-                "⬇️ 下載此節 pptx",
-                data=sec_bytes,
-                file_name=st.session_state.get("sec_name"),
-                mime="application/vnd.openxmlformats-officedocument"
-                     ".presentationml.presentation",
-            )
-            st.caption("已儲存的節會自動用於「製成整場投影片」，除非在下方另行"
-                       "上載／輸入檔名；可用下方開關停用。")
-
-    with st.expander("替換節目的背景圖片（可選）"):
-        overrides = {}
-        for slot in IMAGE_SLOTS:
-            up = st.file_uploader(f"{slot}", type=["jpg", "jpeg", "png", "webp"],
-                                  key=K(f"build_img_{slot}"),
-                                  label_visibility="collapsed",
-                                  accept_multiple_files=False)
-            if up is not None:
-                overrides[slot] = up
+    # Persist uploaded section decks (uploaded in the 編輯內容 wizard steps) so
+    # the section status survives a page refresh (Streamlit clears file_uploader
+    # state). Read straight from the uploader session keys.
+    persist_uploads(DATE, {
+        "songs": st.session_state.get(K("build_songs")),
+        "sermon": st.session_state.get(K("build_sermon")),
+        "announcements": st.session_state.get(K("build_ann")),
+        "offering": st.session_state.get(K("build_offering")),
+        "response": st.session_state.get(K("build_response")),
+    })
 
     ui_ann = _get_ui("ann")
     ann_images = {}
@@ -1033,19 +1750,24 @@ with tab_build:
                         ann_images[i] = up
 
     with st.container(border=True):
-        section_header("C", "製成選項與來源狀態")
+        section_header("A", "步驟狀態")
         use_saved = st.checkbox(
-            "自動使用先前儲存／已產生的各節投影片", value=True,
+            "合併先前各步驟投影片檔", value=True,
             key=K("use_saved"),
-            help="同一日期先「個別產生」過的節，製成整場時會自動合併；"
-                 "取消則全部用網頁編輯內容現場編譯（除非上載或輸入檔名）。")
-        for label, up, nm, sec in (
-                ("🎵 詩歌敬拜", songs_pptx, songs_name, "songs"),
-                ("🙌 獻詩", offering_pptx, offering_name, "offering"),
-                ("🎶 詩歌回應", response_pptx, response_name, "response"),
-                ("🗣 講道信息", sermon_pptx, sermon_name, "sermon"),
-                ("📋 家事分享", ann_pptx, ann_name, "announcements")):
-            text, kind = section_source(up, nm, sec, DATE, use_saved)
+            help="勾選：製成整場時，直接合併先前個別產生的各節 pptx 檔"
+                 "（含已上載的檔案），不需要重新編譯。"
+                 "取消：全部改用網頁上編輯的內容現場編譯。")
+        _wmap = {"songs": "songs", "offering": "offering",
+                 "response": "response", "sermon": "sermon",
+                 "announcements": "ann"}
+        for label, sec in (
+                ("🎵 詩歌敬拜", "songs"),
+                ("🙌 獻詩", "offering"),
+                ("🎶 詩歌回應", "response"),
+                ("🗣 講道信息", "sermon"),
+                ("📋 家事分享", "announcements")):
+            up = st.session_state.get(K("build_" + _wmap[sec]))
+            text, kind = section_source(up, None, sec, DATE, use_saved)
             icon = {"ready": "✅", "saved": "💾", "compile": "🧩"}[kind]
             r1, r2 = st.columns([0.78, 0.22], vertical_alignment="center")
             r1.markdown(f"{icon} **{label}** — {text}")
@@ -1053,14 +1775,34 @@ with tab_build:
                 r2.button("✖ 移除", key=K(f"clear_{sec}"),
                           use_container_width=True,
                           on_click=_signal_clear, args=(DATE, sec),
-                          help="移除該節的上載／指定檔名，並刪除已儲存的 pptx，"
-                               "恢復用網頁內容編譯")
+help="移除該節的上載並刪除已儲存的 pptx，"
+                                "恢復用網頁內容編譯")
         if sv("communion", is_first_sunday(DATE)):
             st.markdown("✅ **聖餐＋使徒信經** — 已加入")
         else:
             st.markdown("⬜ **聖餐＋使徒信經** — 未加入"
                         + ("（第一主日建議勾選）"
                            if is_first_sunday(DATE) else ""))
+        vid_ok = (st.session_state.get(K("video_data")) is not None
+                  or saved_video_mp4(DATE) is not None)
+        if vid_ok:
+            first_deck = st.session_state.get(K("video_first_deck_s9"))
+            if first_deck is None:
+                first_deck = saved_video_meta(DATE)
+            vid_text = ("✅ **🎞 家事MP4** — 已產生"
+                        + ("，將併入第一頁" if bool(first_deck)
+                           else "，未併入第一頁"))
+        else:
+            vid_text = ("🧩 **🎞 家事MP4** — 未產製"
+                        "（請到「編輯內容 → 家事MP4」填入內容並產製）")
+        st.markdown(vid_text)
+
+    st.markdown(
+        '<div style="background-color:#d8f3dc;color:#14532d;'
+        'border:1px solid #52b788;border-radius:8px;padding:12px 16px;'
+        'font-weight:600;">完成檢查後，請按左側「📽 製成整場投影片'
+        '（合併＋編譯）」產生整場投影片。</div>',
+        unsafe_allow_html=True)
 
 # --- generate/download are processed last (uploads/options exist by now) but
 # rendered back into the sidebar slot defined next to the button, so the
@@ -1079,23 +1821,59 @@ with gen_slot:
             return None
 
         try:
+            st.session_state["video_first_applied"] = False
             week = assemble_week(DATE)
             data, slide_count = build_deck(
                 week,
-                songs_pptx=pick(songs_pptx, songs_name, "詩歌檔名"),
-                sermon_pptx=pick(sermon_pptx, sermon_name, "講道檔名"),
-                announcements_pptx=pick(ann_pptx, ann_name, "家事分享檔名"),
-                offering_pptx=pick(offering_pptx, offering_name, "獻詩檔名"),
-                response_pptx=pick(response_pptx, response_name, "詩歌回應檔名"),
-                image_overrides=overrides,
+                songs_pptx=pick(st.session_state.get(K("build_songs")),
+                                None, "詩歌檔名"),
+                sermon_pptx=pick(st.session_state.get(K("build_sermon")),
+                                 None, "講道檔名"),
+                announcements_pptx=pick(st.session_state.get(K("build_ann")),
+                                        None, "家事分享檔名"),
+                offering_pptx=pick(st.session_state.get(K("build_offering")),
+                                   None, "獻詩檔名"),
+                response_pptx=pick(st.session_state.get(K("build_response")),
+                                   None, "詩歌回應檔名"),
                 announcement_images=ann_images,
                 use_saved=use_saved,
             )
+            want_video = st.session_state.get(K("video_first_deck_s9"))
+            if want_video is None:
+                want_video = saved_video_meta(DATE)
+            if want_video:
+                mp4b = st.session_state.get(K("video_data")) \
+                    or _saved_mp4_bytes(DATE)
+                if mp4b is None:
+                    snap = st.session_state.get(K("video_snap_s9"))
+                    if snap and snap.get("kind") != "none":
+                        kn = snap.get("ns") or ""
+                        mp4b, err = build_video_bytes(
+                            snap["kind"], snap["items"], snap["zip_map"],
+                            snap["pptx"],
+                            st.session_state.get(K(f"video_nums{kn}"),
+                                                 snap.get("nums_auto") or "1"),
+                            st.session_state.get(K(f"video_secs{kn}"), 10.0),
+                            st.session_state.get(K(f"video_fps{kn}"), 15),
+                            ann_images)
+                        if err:
+                            st.warning(f"第一頁的影片未加入：{err}")
+                if mp4b:
+                    data = prepend_video_slide(data, mp4b,
+                                               video_poster_png(mp4b))
+                    slide_count += 1
+                    st.session_state["video_first_applied"] = True
+                else:
+                    st.warning("未產製 MP4，無法併入第一頁"
+                               "（請先在「✏️ 編輯內容 → 家事MP4」產生影片）。")
             st.session_state["built_bytes"] = data
             st.session_state["built_name"] = f"Sunday_Service_{DATE}.pptx"
             st.session_state["built_count"] = slide_count
             st.session_state["built_date"] = DATE
-            st.success(f"完成：{slide_count} 頁")
+            if st.session_state.get("video_first_applied"):
+                st.success(f"完成：{slide_count} 頁，影片已併入第一頁。")
+            else:
+                st.success(f"完成：{slide_count} 頁")
             if missing:
                 st.warning("以下檔名找不到，已改用已儲存檔案或網頁內容編譯："
                            + "；".join(missing))
@@ -1112,33 +1890,4 @@ with gen_slot:
                  ".presentationml.presentation",
         )
         st.caption(f"預估 {st.session_state.get('built_count', '?')} 頁；"
-                   "檔案在瀏覽器下載，不會儲存在伺服器。")
-
-with scr_slot:
-    if scr_clicked:
-        try:
-            data, scr_count = build_section_pptx_bytes(
-                "scripture", assemble_week(DATE))
-            st.session_state["scr_bytes"] = data
-            st.session_state["scr_name"] = f"scripture_{DATE}.pptx"
-            st.session_state["scr_date"] = DATE
-            st.session_state["scr_count"] = scr_count
-            st.success(f"完成：{scr_count} 頁（獨立流程，只含讀經經文）")
-        except Exception as exc:
-            st.error(f"製成失敗：{exc}")
-
-    scr = st.session_state.get("scr_bytes")
-    if scr and st.session_state.get("scr_date") == DATE:
-        st.download_button(
-            "⬇️ 下載經文投影片 pptx",
-            data=scr,
-            file_name=st.session_state.get("scr_name"),
-            mime="application/vnd.openxmlformats-officedocument"
-                 ".presentationml.presentation",
-        )
-        st.caption("此獨立檔案不會被「製成整場投影片」讀取或合併。")
-
-with tab_build:
-    st.caption("提示：投影片即時製成，無需本機架設伺服器；"
-               "內容儲存在 Google 試算表，不靠伺服器磁碟。"
-               "儲存與製成按鈕在左側面板。")
+                   "檔案在瀏覽器下載，不會儲存在Server。")
