@@ -1753,6 +1753,7 @@ with tab_edit:
     elif step == 5:
         with st.container(border=True):
             section_header("5", "講道信息（Sermon）")
+            _gdrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
                                btn="🗣 產生講道投影片")
