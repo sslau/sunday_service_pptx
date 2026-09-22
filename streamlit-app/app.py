@@ -13,6 +13,7 @@ relied on.
 import io
 import os
 import re
+import tempfile
 import uuid
 import html
 import zipfile
@@ -24,13 +25,14 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
                    layout="wide")
 
 import bible  # noqa: E402
+import gdrive  # noqa: E402
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
                           build_hymn_pptx_bytes, hymn_preview,
                           prepend_video_slide, resolve_deck_path,
                           save_section_deck, save_video_meta, save_video_mp4,
                           saved_section_path, saved_video_meta,
-                          saved_video_mp4)
+                          saved_video_mp4, section_path)
 from video_deck import (announcements_from_pptx,  # noqa: E402
                         build_announcements_mp4, build_images_mp4,
                         build_pptx_slides_mp4)
@@ -232,6 +234,132 @@ def section_deck_panel(sec_key, build_sec, save_sec, label, dl_name,
             mime="application/vnd.openxmlformats-officedocument"
                  ".presentationml.presentation",
             use_container_width=True)
+
+
+def _sa_from_secrets(secrets):
+    sa = secrets.get("gcp_service_account") or {}
+    if sa.get("client_email") and sa.get("private_key"):
+        return dict(sa)
+    return None
+
+
+def _drive_fetch_section(section, date, folder_id):
+    """Find the canonical `section` deck file for `date` inside a Drive folder
+    and download it to the saved-deck path (same location uploads use), so the
+    existing 來源狀態/merge flow picks it up automatically.  Returns the file
+    name, or None when nothing matches (no download performed)."""
+    sa = _sa_from_secrets(st_secrets or {})
+    if not sa:
+        raise RuntimeError(
+            "未設定 Google 服務帳戶（secrets.toml 的 gcp_service_account）")
+    want = os.path.basename(section_path(section, date))
+    if not want:
+        raise RuntimeError("不支援此節（無對應檔名）")
+    files = gdrive.files_in_date_folder(sa, folder_id, date)
+    picked = next((f for f in files if (f.get("name") or "") == want), None)
+    if picked is None:
+        variants = gdrive._date_variants(date)
+        picked = next(
+            (f for f in files
+             if (f.get("name") or "").endswith(".pptx")
+             and any(v in (f.get("name") or "") for v in variants)), None)
+    if picked is None:
+        return None
+    path = section_path(section, date)
+    ok, err = gdrive.download_to(sa, picked["id"], path)
+    if not ok:
+        raise RuntimeError(err)
+    st.cache_data.clear()
+    return picked.get("name")
+
+
+def _drive_fetch_video(folder_id):
+    """Download the date's 家事MP4 (announcements_<date>.mp4) from the Drive
+    date-subfolder into the persisted video store.
+    Returns the file name, or None when nothing matches."""
+    sa = _sa_from_secrets(st_secrets or {})
+    if not sa:
+        raise RuntimeError(
+            "未設定 Google 服務帳戶（secrets.toml 的 gcp_service_account）")
+    want = f"announcements_{DATE}.mp4"
+    files = gdrive.files_in_date_folder(sa, folder_id, DATE)
+    picked = next((f for f in files if (f.get("name") or "") == want), None)
+    if picked is None:
+        variants = gdrive._date_variants(DATE)
+        picked = next(
+            (f for f in files
+             if (f.get("name") or "").endswith(".mp4")
+             and any(v in (f.get("name") or "") for v in variants)), None)
+    if picked is None:
+        return None
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".mp4", prefix="gdrive_", delete=False).name
+    try:
+        ok, err = gdrive.download_to(sa, picked["id"], tmp)
+        if not ok:
+            raise RuntimeError(err)
+        with open(tmp, "rb") as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    save_video_mp4(DATE, data)
+    st.session_state[K("video_data")] = data
+    st.cache_data.clear()
+    return picked.get("name")
+
+
+def _gdrive_panel(section, label, is_video=False):
+    """Expander that pulls the section's .pptx (or the 家事MP4 when is_video)
+    straight from the Livestreaming Drive folder (per-date subfolder).
+    Reusable across wizard steps."""
+    with st.expander("☁️ 從 Google Drive 讀取%s投影片" % label):
+        try:
+            cfg_folder = (st.secrets.get("gdrive", {})
+                          .get("folder", ""))
+        except Exception:
+            cfg_folder = ""
+        if cfg_folder:
+            folder_val = cfg_folder
+            _p = (DATE or "").split(".")
+            _mmdd = ("%s.%s%s" % (_p[0], _p[1], _p[2])
+                     if len(_p) == 3 else DATE)
+            want = (f"announcements_{DATE}.mp4" if is_video
+                    else os.path.basename(section_path(section, DATE)))
+            st.caption("📽 %s投影片會直接從雲端 **「Livestreaming」資料夾**"
+                       "（依日期子資料夾，如 `%s`）讀取，不需手動上載。"
+                       "預期檔案名稱：**`%s`**（或檔名含該日期）。"
+                       % (label, _mmdd, want))
+        else:
+            folder_val = st.text_input(
+                "Drive 資料夾連結（secrets.toml 尚未設定）",
+                key=K("gdrive_folder"),
+                placeholder="https://drive.google.com/drive/folders/…")
+        if st.button("⚡ 讀取並儲存", type="primary",
+                     key=K(f"gdrive_fetch_{section}")):
+            fid = gdrive.folder_id_from(folder_val)
+            if not fid:
+                st.error("請貼上 Google Drive 資料夾連結"
+                         "（須含 /folders/<ID>）")
+            else:
+                try:
+                    if is_video:
+                        name = _drive_fetch_video(fid)
+                    else:
+                        name = _drive_fetch_section(section, DATE, fid)
+                except Exception as exc:
+                    st.error(f"Google Drive 讀取失敗：{exc}")
+                else:
+                    if name:
+                        st.success(f"已從 Drive 讀取：{name}")
+                    else:
+                        want = (f"announcements_{DATE}.mp4" if is_video
+                                else os.path.basename(
+                                    section_path(section, DATE)))
+                        st.warning("資料夾中找不到符合 "
+                                   f"{want}（或日期含 {DATE}）的檔案")
 
 
 def _finalize_stamp(key, label):
@@ -1507,6 +1635,7 @@ with tab_edit:
     elif step == 2:
         with st.container(border=True):
             section_header("2", "詩歌敬拜（Hymns）")
+            _gdrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
                                btn="🎵 產生詩歌投影片")
@@ -1606,6 +1735,7 @@ with tab_edit:
     elif step == 3:
         with st.container(border=True):
             section_header("3", "獻詩（Offering）")
+            _gdrive_panel("offering", "獻詩")
             section_deck_panel("offering", None, "offering", "獻詩", None)
             ready = section_ready("offering", "build_offering_name", "獻詩")
             if ready:
@@ -1637,6 +1767,7 @@ with tab_edit:
         with st.container(border=True):
             section_header("6", "詩歌回應（Response Hymn）",
                            "單首回應詩歌，緊接信息之後（可選）")
+            _gdrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
                                btn="🎶 產生詩歌回應投影片")
@@ -1694,6 +1825,7 @@ with tab_edit:
     elif step == 8:
         with st.container(border=True):
             section_header("8", "家事分享（Announcements）")
+            _gdrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
                                f"announcements_{DATE}.pptx",
@@ -1708,6 +1840,7 @@ with tab_edit:
 
     elif step == 9:
         with st.container(border=True):
+            _gdrive_panel("video", "家事MP4", is_video=True)
             render_video_panel("s9", "9")
         st.caption("產生 MP4 後，按左側「📽 製成整場投影片」即會自動併入"
                    "整場投影片的第一頁（勾選「併入第一頁」時，自動循環播放）。")
