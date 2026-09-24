@@ -4,9 +4,10 @@
     {
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
-      "hymn_font_max": 54,   # lyrics auto-fit ceiling (goes big up to this)
-      "hymn_font_min":  44,
+      "hymn_font_max": 48,   # lyrics auto-fit ceiling (default 48pt; UI 48–54)
+      "hymn_font_min":  48,   # lyrics auto-fit floor — never smaller than 48pt
       "hymn_margin_in": 0.83,
+      "call_font":      "DFKai-SB",   # global typeface for all text
       "hymns": [ {title, subtitle, source, refrain[], refrain_after_every_verse,
                   verses[ [line...], ... ]} ],
       "scripture":    {ref, ref_size, font_size, max_lines, verses[]},
@@ -95,10 +96,11 @@ def normalize_week(w):
     psalm["verses"] = [str(v) for v in (psalm.get("verses") or []) if str(v).strip()]
     w["psalm"] = psalm
 
-    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 54)
-    w["hymn_font_min"] = _num(w.get("hymn_font_min"), 44)
+    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 48)
+    w["hymn_font_min"] = _num(w.get("hymn_font_min"), 48)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
     w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))
+    w["call_font"] = str(w.get("call_font") or "DFKai-SB")
     w["hymns_finalized"] = bool(w.get("hymns_finalized", False))
 
     hymns = []

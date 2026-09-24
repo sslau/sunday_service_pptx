@@ -596,10 +596,11 @@ def _seed_values(week, date):
         "psalm_ref_size": psalm.get("ref_size", 48),
         "psalm_font_size": psalm.get("font_size", 44),
         "psalm_verses": "\n".join(psalm.get("verses") or []),
-        "hymn_font_max": week.get("hymn_font_max", 54),
-        "hymn_font_min": week.get("hymn_font_min", 44),
+        "hymn_font_max": week.get("hymn_font_max", 48),
+        "hymn_font_min": week.get("hymn_font_min", 48),
         "hymn_margin_in": week.get("hymn_margin_in", 0.83),
         "hymn_text_shadow": bool(week.get("hymn_text_shadow", True)),
+        "call_font": week.get("call_font", "DFKai-SB") or "DFKai-SB",
         "hymns_finalized": bool(week.get("hymns_finalized", False)),
         "scripture_ref": scripture.get("ref", ""),
         "scripture_ref_size": scripture.get("ref_size", 48),
@@ -799,10 +800,11 @@ def assemble_week(date):
             "font_size": int(gv("psalm_font_size", 44)),
             "verses": split_lines(gv("psalm_verses", "")),
         },
-        "hymn_font_max": int(gv("hymn_font_max", 54)),
-        "hymn_font_min": int(gv("hymn_font_min", 44)),
+        "hymn_font_max": int(gv("hymn_font_max", 48)),
+        "hymn_font_min": int(gv("hymn_font_min", 48)),
         "hymn_margin_in": float(gv("hymn_margin_in", 0.83)),
         "hymn_text_shadow": bool(gv("hymn_text_shadow", True)),
+        "call_font": str(gv("call_font", "DFKai-SB") or "DFKai-SB"),
         "hymns_finalized": bool(gv("hymns_finalized", False)),
         "hymns": [assemble_hymn(date, h) for h in ui_hymns],
         "scripture": {
@@ -1165,6 +1167,41 @@ VERSION_OPTIONS = ["和合本", "和合本2010（和修版）", "新譯本"]
 VERSION_NOTE = {"和合本": "和合本",
                 "和合本2010（和修版）": "和合本2010", "新譯本": "新譯本"}
 
+FONT_OPTIONS = [
+    ("DFKai-SB", "DFKai-SB（標楷體）"),
+    ("PMingLiU", "PMingLiU（新細明體）"),
+    ("Microsoft JhengHei", "Microsoft JhengHei（微軟正黑體）"),
+]
+FONT_LABEL = dict(FONT_OPTIONS)
+
+
+def _font_radio(label, key):
+    """統一的全場字型選擇（寫入 `call_font`）。"""
+    st.radio(
+        label,
+        options=[f for f, _ in FONT_OPTIONS],
+        format_func=lambda f: FONT_LABEL.get(f, f),
+        key=key,
+        horizontal=True)
+    return sv(key.split("::")[-1], "DFKai-SB")
+
+
+def _song_font_selector(label, hint=None):
+    """歌詞字級下拉（48–54pt），label 與下拉同一行並緊貼。若舊週次存有
+    範圍外的數值，自動補進選項，避免 selectbox 因值不在清單而報錯。"""
+    cur = int(sv("hymn_font_max", 48) or 48)
+    options = sorted(set(range(48, 55)) | {cur})
+    c1, c2, _ = st.columns([1.3, 0.9, 5], vertical_alignment="center")
+    c1.markdown(f"**{label}**")
+    c2.selectbox(
+        "歌詞字級",
+        options=options,
+        format_func=lambda v: f"{v} pt",
+        key=K("hymn_font_max"),
+        label_visibility="collapsed")
+    if hint:
+        st.caption(hint)
+
 
 def _strip_ref_note(ref):
     """Remove a trailing `（版本）` / `(版本)` note from a reference."""
@@ -1514,6 +1551,8 @@ def _render_scr_flow():
     st.progress(1.0, text="第 1 / 1 步驟 · 經文投影片")
     st.divider()
 
+    _font_radio("經文投影片使用的字型", K("scrflow_font"))
+
     with st.container(border=True):
         section_header("1", "經文投影片", "輸入出處一鍵載入，或直接貼上整段經文")
         _scripture_editor("scrflow")
@@ -1526,6 +1565,7 @@ def _render_scr_flow():
         try:
             week = normalize_week({
                 "date": DATE,
+                "call_font": sv("scrflow_font", "DFKai-SB"),
                 "scripture": {
                     "ref": sv("scrflow_ref", ""),
                     "ref_size": int(sv("scrflow_ref_size", 48) or 48),
@@ -1602,7 +1642,7 @@ with st.sidebar:
     st.markdown('<div class="sec-title" style="font-size:1rem">📜 經文投影片'
                 '<span class="brand-tail">（獨立流程）</span></div>',
                 unsafe_allow_html=True)
-    st.caption("單一步驟：只輸入「經文（讀經）」內容製成 pptx；\n"
+    st.caption("單一步驟：只輸入「經文」內容製成 pptx；\n"
                "不會儲存到 Google Sheet，也不屬於整場流程。")
     if st.button("📜 開啟「經文投影片」獨立流程",
                  use_container_width=True, key=K("enter_scr_flow")):
@@ -1623,6 +1663,19 @@ with tab_edit:
         f'</div></div>', unsafe_allow_html=True)
 
     step = _edit_step()
+
+    _FONT_OPTIONS = [
+        ("DFKai-SB", "DFKai-SB（標楷體）"),
+        ("PMingLiU", "PMingLiU（新細明體）"),
+        ("Microsoft JhengHei", "Microsoft JhengHei（微軟正黑體）"),
+    ]
+    _font_label = dict(_FONT_OPTIONS)
+    st.radio(
+        "全場統一使用的字型（套用所有投影片文字）",
+        options=[f for f, _ in _FONT_OPTIONS],
+        format_func=lambda f: _font_label.get(f, f),
+        key=K("call_font"),
+        horizontal=True)
 
     _step_marker(step)
     st.divider()
@@ -1645,10 +1698,11 @@ with tab_edit:
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
-            st.caption("歌詞固定 **44pt** 置中對齊；**每行只接受 19 個字**"
-                       "（含標點符號），超過會自動換行；投影片中**標點符號以空格"
-                       "取代**（例如「，」「。」→ 空白）。每首詩歌可用下方"
-                       "「背景圖」各自指定背景（預設依序 song_bg1.jpg…）。")
+            _song_font_selector(
+                "歌詞字級（pt）",
+                hint="固定字級（48–54pt），不隨行長縮小；行太長時自動換行。"
+                     "標點符號以空格取代（如「，」「。」→ 空白）。"
+                     "每首詩歌可用下方「背景圖」各自指定背景。")
 
             for i, h in enumerate(_get_ui("hymns")):
                 uid = h["_id"]
@@ -1776,6 +1830,9 @@ with tab_edit:
             st.caption(ready or "此節**可選**：不需要可直接按「下一步」略過。"
                        "要加入時，可填寫以下內容現場編譯；"
                        "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
+            _song_font_selector(
+                "歌詞字級（pt）",
+                hint="與「詩歌敬拜」共用同一設定（48–54pt）。")
             ui_resp = st.session_state.setdefault(f"{DATE}::ui_resp", [""])
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):

@@ -896,7 +896,8 @@ def _blank_layout(pres):
 
 
 def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
-                   lines, size, typeface, algn, shadow=False, bold=False):
+                   lines, size, typeface, algn, shadow=False, bold=False,
+                   underline=False):
     """Add a brand-new textbox from scratch (no template inheritance)."""
     tb = slide.shapes.add_textbox(int(left_in * 914400),
                                   int(top_in * 914400),
@@ -913,6 +914,8 @@ def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
         r.font.color.rgb = RGBColor.from_string("FFFFFF")
         if bold:
             r.font.bold = True
+        if underline:
+            r.font.underline = True
         if shadow:
             _run_shadow(r)
     _set_font(tb, typeface)
@@ -980,8 +983,8 @@ def _fresh_reading_slide(slide, ref, lines, content_size, ref_size,
     if ref_only and ref:
         _fresh_textbox(slide, 0.83, 0.30, 11.67, 0.95,
                        [bible.expand_book_ref(ref)],
-                       ref_size, typeface, algn=PP_ALIGN.CENTER,
-                       bold=bold_ref)
+                       ref_size, typeface, algn=PP_ALIGN.LEFT,
+                       bold=bold_ref, underline=True)
         top = 1.5
     else:
         top = 0.85
@@ -1115,7 +1118,7 @@ def build_hymns_section(pres, cfg, hymns):
         # title card
         slide = _new_slide(pres, bg=bg)
         title = hymn["title"]
-        tsize = fit_size([title], 60, box_w, min_pt=34)
+        tsize = 60
         shadow = cfg.get("hymn_text_shadow", True)
         _fresh_textbox(slide, margin, 2.0, box_w, 1.4, [title],
                        tsize, typeface, PP_ALIGN.CENTER, shadow=shadow)
@@ -1130,8 +1133,8 @@ def build_hymns_section(pres, cfg, hymns):
         if hymn.get("lyricist"):
             attrs.append("詞: " + hymn["lyricist"])
         if attrs:
-            _fresh_textbox(slide, margin, 4.3, box_w, 1.6, attrs, 26,
-                           typeface, PP_ALIGN.CENTER, shadow=shadow)
+            _fresh_textbox(slide, margin + 0.4, 4.3, box_w - 0.4, 1.6, attrs,
+                           26, typeface, PP_ALIGN.LEFT, shadow=shadow)
 
         # 每首詩歌的總頁數：各段（＋副歌）— 標題卡不計。
         verses = [[_hymn_clean_line(ln) for ln in vs]
@@ -1147,8 +1150,9 @@ def build_hymns_section(pres, cfg, hymns):
             total += len(verses)
         elif refrain:
             total += 1
-        # 全首詩歌使用固定 44pt（每行至多 19 字即可不出框）,標題卡另行處理。
-        song_size = 44
+        # 歌詞字級：固定使用 hymn_font_max（預設 48pt、選單 48–54pt），
+        # 不隨行長縮小；行太長時由 word_wrap 自動換行。
+        song_size = int(cfg.get("hymn_font_max", 48) or 48)
         page = 0
 
         def add_verse(lines, bg=bg):
