@@ -29,8 +29,10 @@ import gdrive  # noqa: E402
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
                           build_hymn_pptx_bytes, hymn_preview,
+                          clear_upload_name, load_upload_names,
                           prepend_video_slide, resolve_deck_path,
-                          save_section_deck, save_video_meta, save_video_mp4,
+                          save_section_deck, save_upload_name,
+                          save_video_meta, save_video_mp4,
                           saved_section_path, saved_video_meta,
                           saved_video_mp4, section_path)
 from video_deck import (announcements_from_pptx,  # noqa: E402
@@ -177,9 +179,19 @@ def _bg_picker(wkey, default):
     return current
 
 
+def _uploaded_name(upload):
+    """Display name of an UploadedFile, or None."""
+    if upload is None:
+        return None
+    return (getattr(upload, "name", "") or "").strip() or None
+
+
 def section_source(upload, name, section, date, use_saved):
     """Where a section's slides will come from, for the readiness indicator."""
     if upload is not None:
+        fname = _uploaded_name(upload)
+        if fname:
+            return f"已上載檔案（合併）：{fname}", "ready"
         return "已上載檔案（合併）", "ready"
     path = resolve_deck_path(name) if name else None
     if path:
@@ -187,20 +199,36 @@ def section_source(upload, name, section, date, use_saved):
     if use_saved:
         saved = saved_section_path(section, date)
         if saved:
+            if name:
+                return f"使用已上載：{os.path.basename(name)}（已儲存）", "saved"
             return f"使用已儲存：{os.path.basename(saved)}", "saved"
     return "由網頁內容編譯", "compile"
 
 
-def section_ready(section, name_key, label):
+def section_ready(section, name_key, label, upload_key=None):
     """Edit-wizard caption when the section already has an uploaded/found pptx
-    (mirrors the build-tab status), else None."""
+    (mirrors the build-tab status), else None. `upload_key` is the file-uploader
+    widget key so an uploaded deck's original filename can be shown."""
+    up = st.session_state.get(K(upload_key)) if upload_key else None
+    if up is not None:
+        fname = _uploaded_name(up)
+        if fname:
+            return (f"✅ 已上載 {label} .pptx：**{fname}**"
+                    "（製成整場時以該檔案為準）")
+        return f"✅ 已上載 {label} .pptx（製成整場時以該檔案為準）"
     name = st.session_state.get(K(name_key))
-    if name and resolve_deck_path(name):
+    path = resolve_deck_path(name) if name else None
+    if path:
         return (f"✅ 已有現成的 {label} .pptx：使用檔案 "
-                f"{os.path.basename(resolve_deck_path(name))}")
-    if sv("use_saved", True) and saved_section_path(section, DATE):
-        return (f"✅ 已有現成的 {label} .pptx（已上載／已儲存），"
-                "製成整場時以該檔案為準。")
+                f"{os.path.basename(path)}")
+    if sv("use_saved", True):
+        saved = saved_section_path(section, DATE)
+        if saved:
+            if name:
+                return (f"✅ 已上載 {label} .pptx：**{os.path.basename(name)}**"
+                        "（已儲存，製成整場時以該檔案為準）")
+            return (f"✅ 已有現成的 {label} .pptx（已上載／已儲存），"
+                    "製成整場時以該檔案為準。")
     return None
 
 
@@ -269,8 +297,12 @@ def _drive_fetch_section(section, date, folder_id):
     ok, err = gdrive.download_to(sa, picked["id"], path)
     if not ok:
         raise RuntimeError(err)
+    fname = picked.get("name") or ""
+    st.session_state[f"{date}::build_{'ann' if section == 'announcements' else section}_name"] = \
+        fname
+    save_upload_name(section, date, fname)
     st.cache_data.clear()
-    return picked.get("name")
+    return fname
 
 
 def _drive_fetch_video(folder_id):
@@ -499,7 +531,10 @@ def date_from_filename(name):
 def persist_uploads(date, uploads):
     """Save freshly uploaded section decks to data/decks/<date>/ so the
     section status survives a page refresh (Streamlit clears file_uploader
-    state on reload). `uploads` maps section -> UploadedFile|None."""
+    state on reload). `uploads` maps section -> UploadedFile|None.
+    The original uploaded filename is remembered in the `build_<widget>_name`
+    key so the status page keeps showing it (instead of the canonical saved
+    name) even after the file has been persisted."""
     for sec, up in uploads.items():
         if up is None:
             continue
@@ -507,6 +542,10 @@ def persist_uploads(date, uploads):
         if st.session_state.get(f"{date}::uploadsig_{sec}") != sig:
             save_section_deck(sec, date, up.getvalue())
             st.session_state[f"{date}::uploadsig_{sec}"] = sig
+            wkey = "ann" if sec == "announcements" else sec
+            st.session_state[f"{date}::build_{wkey}_name"] = \
+                getattr(up, "name", "") or ""
+            save_upload_name(sec, date, getattr(up, "name", "") or "")
 
 
 def _signal_clear(date, section):
@@ -732,9 +771,22 @@ for _sec in _SECTION_KEYS:
         st.session_state.pop(f"{DATE}::uploadsig_{_sec}", None)
         st.session_state.pop(f"{DATE}::clear_{_sec}", None)
         clear_section_deck(_sec, DATE)
+        clear_upload_name(_sec, DATE)
         _cleared = True
 if _cleared:
     st.rerun()
+
+# After a fresh login, session state is empty but the saved decks and their
+# original filenames survive on disk. Repopulate the `build_<widget>_name`
+# keys from the durable record so the status page keeps showing the uploaded
+# filename instead of the canonical default.
+_src_names = load_upload_names(DATE)
+for _sec in _SECTION_KEYS:
+    _wkey = "ann" if _sec == "announcements" else _sec
+    if (_src_names.get(_sec) and
+            K("build_" + _wkey + "_name") not in st.session_state and
+            saved_section_path(_sec, DATE)):
+        st.session_state[K("build_" + _wkey + "_name")] = _src_names[_sec]
 
 
 def _get_ui(kind):
@@ -1692,7 +1744,7 @@ with tab_edit:
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
                                btn="🎵 產生詩歌投影片")
-            ready = section_ready("songs", "build_songs_name", "詩歌")
+            ready = section_ready("songs", "build_songs_name", "詩歌", "build_songs")
             st.caption(ready or "以下內容以網頁內容現場編譯；上載 .pptx 時"
                        "以檔案為準，字型／項目符號沿用來源檔。")
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
@@ -1791,7 +1843,7 @@ with tab_edit:
             section_header("3", "獻詩（Offering）")
             _gdrive_panel("offering", "獻詩")
             section_deck_panel("offering", None, "offering", "獻詩", None)
-            ready = section_ready("offering", "build_offering_name", "獻詩")
+            ready = section_ready("offering", "build_offering_name", "獻詩", "build_offering")
             if ready:
                 st.caption(ready)
             else:
@@ -1811,7 +1863,7 @@ with tab_edit:
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
                                btn="🗣 產生講道投影片")
-            ready = section_ready("sermon", "build_sermon_name", "講道")
+            ready = section_ready("sermon", "build_sermon_name", "講道", "build_sermon")
             if ready:
                 st.caption(ready)
             else:
@@ -1826,7 +1878,8 @@ with tab_edit:
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
                                btn="🎶 產生詩歌回應投影片")
-            ready = section_ready("response", "build_response_name", "詩歌回應")
+            ready = section_ready("response", "build_response_name", "詩歌回應",
+                              "build_response")
             st.caption(ready or "此節**可選**：不需要可直接按「下一步」略過。"
                        "要加入時，可填寫以下內容現場編譯；"
                        "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
@@ -1889,7 +1942,7 @@ with tab_edit:
                                f"announcements_{DATE}.pptx",
                                btn="📋 產生家事分享投影片",
                                widget="ann")
-            ready = section_ready("announcements", "build_ann_name", "家事分享")
+            ready = section_ready("announcements", "build_ann_name", "家事分享", "build_ann")
             if ready:
                 st.caption(ready)
             else:
@@ -1958,7 +2011,8 @@ with tab_build:
                 ("🗣 講道信息", "sermon"),
                 ("📋 家事分享", "announcements")):
             up = st.session_state.get(K("build_" + _wmap[sec]))
-            text, kind = section_source(up, None, sec, DATE, use_saved)
+            name = st.session_state.get(K("build_" + _wmap[sec] + "_name"))
+            text, kind = section_source(up, name, sec, DATE, use_saved)
             icon = {"ready": "✅", "saved": "💾", "compile": "🧩"}[kind]
             r1, r2 = st.columns([0.78, 0.22], vertical_alignment="center")
             r1.markdown(f"{icon} **{label}** — {text}")

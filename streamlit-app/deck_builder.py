@@ -79,6 +79,61 @@ def clear_section_deck(section, date):
     return False
 
 
+# Original uploaded/source filenames are kept in a small JSON next to the
+# saved decks so the status page can still show them after a re-login
+# (session state is cleared, but the deck files on disk survive).
+def upload_names_path(date):
+    if not date:
+        return None
+    return os.path.join(SAVE_DIR, str(date), "upload_names.json")
+
+
+def save_upload_name(section, date, name):
+    """Durably record the original filename a section deck was saved from."""
+    path = upload_names_path(date)
+    if not path or not name:
+        return
+    names = {}
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as fh:
+                names = json.load(fh) or {}
+    except (OSError, ValueError, TypeError):
+        names = {}
+    if not isinstance(names, dict):
+        names = {}
+    names[section] = str(name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(names, fh, ensure_ascii=False, indent=1)
+
+
+def load_upload_names(date):
+    """Mapping section -> original filename for a date, or {}."""
+    path = upload_names_path(date)
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            names = json.load(fh)
+        return names if isinstance(names, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def clear_upload_name(section, date):
+    """Drop a section's recorded original filename (keeps the deck itself)."""
+    names = load_upload_names(date)
+    if section in names:
+        del names[section]
+        path = upload_names_path(date)
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(names, fh, ensure_ascii=False, indent=1)
+        except OSError:
+            pass
+
+
 def video_mp4_path(date):
     """Canonical save path for a generated 家事MP4 (may not exist yet)."""
     if not date:
