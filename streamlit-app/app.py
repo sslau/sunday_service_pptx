@@ -26,10 +26,11 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
 
 import bible  # noqa: E402
 import gdrive  # noqa: E402
+import onedrive  # noqa: E402
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
                           build_hymn_pptx_bytes, hymn_preview,
-                          clear_upload_name, load_upload_names,
+                          clear_upload_name, clear_video, load_upload_names,
                           prepend_video_slide, resolve_deck_path,
                           save_section_deck, save_upload_name,
                           save_video_meta, save_video_mp4,
@@ -343,6 +344,92 @@ def _drive_fetch_video(folder_id):
     return picked.get("name")
 
 
+def _od_config():
+    """[onedrive] block from secrets, or None when not configured."""
+    try:
+        cfg = dict(st.secrets.get("onedrive", {}) or {})
+    except Exception:
+        cfg = {}
+    if not (cfg.get("tenant_id") and cfg.get("client_id")
+            and cfg.get("client_secret")):
+        return None
+    return cfg
+
+
+def _od_fetch_section(section, date, cfg, picked_file=None):
+    """Save a section deck from the OneDrive date-subfolder to the saved-deck
+    path.  When `picked_file` ({id,name}) is given it is downloaded directly;
+    otherwise fall back to the canonical name, then any .pptx containing a
+    date spelling.  Records the original filename like the Drive path.
+    Returns the file name, or None."""
+    want = os.path.basename(section_path(section, date) or "")
+    if not want:
+        raise RuntimeError("不支援此節（無對應檔名）")
+    picked = picked_file if (
+        picked_file and picked_file.get("id") and picked_file.get("name")) else None
+    if picked is None:
+        files = onedrive.files_in_date_folder(
+            cfg, cfg.get("folder_path", ""), date)
+        picked = next((f for f in files if (f.get("name") or "") == want), None)
+        if picked is None:
+            variants = onedrive._date_variants(date)
+            picked = next(
+                (f for f in files
+                 if (f.get("name") or "").endswith(".pptx")
+                 and any(v in (f.get("name") or "") for v in variants)), None)
+    if picked is None:
+        return None
+    path = section_path(section, date)
+    ok, err = onedrive.download_to(cfg, picked["id"], path)
+    if not ok:
+        raise RuntimeError(err)
+    fname = picked.get("name") or ""
+    st.session_state[f"{date}::build_{'ann' if section == 'announcements' else section}_name"] = \
+        fname
+    save_upload_name(section, date, fname)
+    st.cache_data.clear()
+    return fname
+
+
+def _od_fetch_video(cfg, picked_file=None):
+    """Download the date's 家事MP4 into the persisted video store.  When
+    `picked_file` ({id,name}) is given it is downloaded directly; otherwise
+    fall back to announcements_<date>.mp4, then any .mp4 containing a date
+    spelling.  Returns the file name, or None."""
+    picked = picked_file if (
+        picked_file and picked_file.get("id") and picked_file.get("name")) else None
+    if picked is None:
+        want = f"announcements_{DATE}.mp4"
+        files = onedrive.files_in_date_folder(
+            cfg, cfg.get("folder_path", ""), DATE)
+        picked = next((f for f in files if (f.get("name") or "") == want), None)
+        if picked is None:
+            variants = onedrive._date_variants(DATE)
+            picked = next(
+                (f for f in files
+                 if (f.get("name") or "").lower().endswith(".mp4")
+                 and any(v in (f.get("name") or "") for v in variants)), None)
+    if picked is None:
+        return None
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".mp4", prefix="odrive_", delete=False).name
+    try:
+        ok, err = onedrive.download_to(cfg, picked["id"], tmp)
+        if not ok:
+            raise RuntimeError(err)
+        with open(tmp, "rb") as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    save_video_mp4(DATE, data)
+    st.session_state[K("video_data")] = data
+    st.cache_data.clear()
+    return picked.get("name")
+
+
 def _gdrive_panel(section, label, is_video=False):
     """Expander that pulls the section's .pptx (or the 家事MP4 when is_video)
     straight from the Livestreaming Drive folder (per-date subfolder).
@@ -392,6 +479,81 @@ def _gdrive_panel(section, label, is_video=False):
                                     section_path(section, DATE)))
                         st.warning("資料夾中找不到符合 "
                                    f"{want}（或日期含 {DATE}）的檔案")
+
+
+def _odrive_panel(section, label, is_video=False):
+    """Expander that lists the section decks (or the 家事MP4 when is_video) in
+    the configured OneDrive/SharePoint folder and lets the user pick which file
+    to download.  Reusable across wizard steps."""
+    with st.expander("🌐 從 OneDrive 讀取%s投影片" % label):
+        cfg = _od_config()
+        if not cfg:
+            st.info("未設定 OneDrive（secrets.toml 的 [onedrive] 區塊："
+                    "tenant_id / client_id / client_secret / site_host / "
+                    "site_path / folder_path）。設定後即可從雲端讀取。")
+            return
+        _p = (DATE or "").split(".")
+        _mmdd = ("%s.%s%s" % (_p[0], _p[1], _p[2])
+                 if len(_p) == 3 else DATE)
+        want = (f"announcements_{DATE}.mp4" if is_video
+                else os.path.basename(section_path(section, DATE) or ""))
+        ext = ".mp4" if is_video else ".pptx"
+        st.caption("📽 %s投影片會直接從 OneDrive **`%s`** 資料夾"
+                   "（依日期子資料夾，如 `%s`）讀取；請從下方清單選擇檔案後"
+                   "按「讀取並儲存」。預期名稱：**`%s`**。"
+                   % (label, cfg.get("folder_path", ""), _mmdd, want))
+        try:
+            cand = onedrive.files_in_date_folder(
+                cfg, cfg.get("folder_path", ""), DATE)
+        except Exception as exc:
+            st.error(f"OneDrive 讀取失敗：{exc}")
+            return
+        if is_video:
+            cand = [f for f in cand
+                    if (f.get("name") or "").lower().endswith(".mp4")]
+        names = [f.get("name", "") for f in cand]
+        # Preselect: exact canonical name, then any name containing the date.
+        default = None
+        if want:
+            default = next((n for n in names if n == want), None)
+        if default is None and names:
+            variants = onedrive._date_variants(DATE)
+            default = next(
+                (n for n in names
+                 if n.endswith(ext) and any(v in n for v in variants)), None)
+        if default is None and names:
+            default = names[0]
+        if names:
+            picked = st.radio(
+                "選擇要下載的檔案：",
+                names,
+                index=names.index(default) if default in names else 0,
+                key=K(f"odrive_pick_{section}"))
+        else:
+            picked = None
+            st.info("該日期資料夾中沒有可下載的%s檔案。"
+                    % ("MP4" if is_video else "簡報"))
+        if st.button("⚡ 從 OneDrive 讀取並儲存", type="primary",
+                     key=K(f"odrive_fetch_{section}")):
+            if not picked:
+                st.warning("資料夾中沒有可下載的檔案。")
+                return
+            f = next((x for x in cand if x.get("name") == picked), None)
+            if f is None:
+                st.warning("找不到所選檔案。")
+                return
+            try:
+                if is_video:
+                    name = _od_fetch_video(cfg, f)
+                else:
+                    name = _od_fetch_section(section, DATE, cfg, f)
+            except Exception as exc:
+                st.error(f"OneDrive 讀取失敗：{exc}")
+            else:
+                if name:
+                    st.success(f"已從 OneDrive 讀取：{name}")
+                else:
+                    st.warning("下載未完成，請再試一次。")
 
 
 def _finalize_stamp(key, label):
@@ -773,6 +935,13 @@ for _sec in _SECTION_KEYS:
         clear_section_deck(_sec, DATE)
         clear_upload_name(_sec, DATE)
         _cleared = True
+if st.session_state.get(f"{DATE}::clear_video"):
+    st.session_state.pop(f"{DATE}::clear_video", None)
+    st.session_state.pop(K("video_data"), None)
+    st.session_state.pop(K("video_first_deck_s9"), None)
+    st.session_state.pop(K("video_first_deck"), None)
+    clear_video(DATE)
+    _cleared = True
 if _cleared:
     st.rerun()
 
@@ -1740,6 +1909,7 @@ with tab_edit:
     elif step == 2:
         with st.container(border=True):
             section_header("2", "詩歌敬拜（Hymns）")
+            _odrive_panel("songs", "詩歌")
             _gdrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
@@ -1841,6 +2011,7 @@ with tab_edit:
     elif step == 3:
         with st.container(border=True):
             section_header("3", "獻詩（Offering）")
+            _odrive_panel("offering", "獻詩")
             _gdrive_panel("offering", "獻詩")
             section_deck_panel("offering", None, "offering", "獻詩", None)
             ready = section_ready("offering", "build_offering_name", "獻詩", "build_offering")
@@ -1859,6 +2030,7 @@ with tab_edit:
     elif step == 5:
         with st.container(border=True):
             section_header("5", "講道信息（Sermon）")
+            _odrive_panel("sermon", "講道")
             _gdrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
@@ -1874,6 +2046,7 @@ with tab_edit:
         with st.container(border=True):
             section_header("6", "詩歌回應（Response Hymn）",
                            "單首回應詩歌，緊接信息之後（可選）")
+            _odrive_panel("response", "詩歌回應")
             _gdrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
@@ -1936,6 +2109,7 @@ with tab_edit:
     elif step == 8:
         with st.container(border=True):
             section_header("8", "家事分享（Announcements）")
+            _odrive_panel("announcements", "家事分享")
             _gdrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
@@ -1951,6 +2125,7 @@ with tab_edit:
 
     elif step == 9:
         with st.container(border=True):
+            _odrive_panel("video", "家事MP4", is_video=True)
             _gdrive_panel("video", "家事MP4", is_video=True)
             render_video_panel("s9", "9")
         st.caption("產生 MP4 後，按左側「📽 製成整場投影片」即會自動併入"
@@ -2040,7 +2215,14 @@ help="移除該節的上載並刪除已儲存的 pptx，"
         else:
             vid_text = ("🧩 **🎞 家事MP4** — 未產製"
                         "（請到「編輯內容 → 家事MP4」填入內容並產製）")
-        st.markdown(vid_text)
+        vr1, vr2 = st.columns([0.78, 0.22], vertical_alignment="center")
+        vr1.markdown(vid_text)
+        if vid_ok:
+            vr2.button("✖ 移除", key=K("clear_video_btn"),
+                       use_container_width=True,
+                       on_click=_signal_clear, args=(DATE, "video"),
+                       help="移除已產製的家事MP4並刪除已儲存的 mp4 檔，"
+                            "恢復以網頁內容重新產製")
 
     st.markdown(
         '<div style="background-color:#d8f3dc;color:#14532d;'

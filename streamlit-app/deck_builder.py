@@ -160,6 +160,26 @@ def save_video_mp4(date, data):
     return path
 
 
+def clear_video(date):
+    """Delete a previously generated 家事MP4 and its 併入第一頁 meta
+    (if any).  Returns True when the mp4 was removed."""
+    removed = False
+    path = saved_video_mp4(date)
+    if path:
+        try:
+            os.remove(path)
+            removed = True
+        except OSError:
+            pass
+    meta = _video_meta_path(date)
+    if meta and os.path.isfile(meta):
+        try:
+            os.remove(meta)
+        except OSError:
+            pass
+    return removed
+
+
 def _video_meta_path(date):
     if not date:
         return None
