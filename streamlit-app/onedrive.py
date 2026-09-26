@@ -151,6 +151,45 @@ def files_in_date_folder(cfg, folder_path, date):
     return list_files(cfg, folder_path)
 
 
+def find_mp4s(cfg, folder_path=None, limit=300):
+    """Recursively list all .mp4 files under a drive folder (default: drive
+    root).  Returns [{id, name, size, path}] where path is drive-relative
+    ('' for the root's own files, 'sub/name.mp4' inside folders)."""
+    site = _site_ref(cfg)
+    sep = ":" if not (cfg.get("site_id") or "").strip() else ""
+    headers = {"Authorization": "Bearer %s" % _access_token(cfg)}
+    out = []
+    root = (folder_path or "").strip("/")
+    queue = [(root, "%s%s/drive/root/children" % (site, sep))] if not root else [
+        (root, "%s%s/drive/root:/%s:/children" % (site, sep,
+                                                  urllib.parse.quote(root, safe="/")))]
+    while queue and len(out) < limit:
+        rel, url = queue.pop(0)
+        while url and len(out) < limit:
+            resp = requests.get(url, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    "OneDrive 列表失敗 (%s)：%s" % (resp.status_code, resp.text[:300]))
+            data = resp.json()
+            for it in data.get("value", []):
+                name = it.get("name", "")
+                child_rel = name if not rel else rel + "/" + name
+                if it.get("folder"):
+                    queue.append(
+                        (child_rel,
+                         "%s%s/drive/root:/%s:/children"
+                         % (site, sep, urllib.parse.quote(child_rel, safe="/"))))
+                elif name.lower().endswith(".mp4"):
+                    out.append({
+                        "id": it.get("id"),
+                        "name": name,
+                        "size": it.get("size"),
+                        "path": child_rel,
+                    })
+            url = data.get("@odata.nextLink")
+    return out
+
+
 def download_to(cfg, file_id, target_path):
     """Stream a drive file's bytes into target_path (tmp file, then rename).
     Returns (ok, err); err is None on success."""

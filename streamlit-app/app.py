@@ -498,55 +498,92 @@ def _odrive_panel(section, label, is_video=False):
         want = (f"announcements_{DATE}.mp4" if is_video
                 else os.path.basename(section_path(section, DATE) or ""))
         ext = ".mp4" if is_video else ".pptx"
-        st.caption("📽 %s投影片會直接從 OneDrive **`%s`** 資料夾"
-                   "（依日期子資料夾，如 `%s`）讀取；請從下方清單選擇檔案後"
-                   "按「讀取並儲存」。預期名稱：**`%s`**。"
-                   % (label, cfg.get("folder_path", ""), _mmdd, want))
+        if is_video:
+            st.caption("📽 家事MP4 會從 OneDrive **`%s`** 資料夾（含所有子資料夾）"
+                       "搜尋 **.mp4**；請從下方清單選擇檔案後按「讀取並儲存」。"
+                       "預期名稱：**`%s`**。"
+                       % (cfg.get("folder_path", ""), want))
+        else:
+            st.caption("📽 %s投影片會直接從 OneDrive **`%s`** 資料夾"
+                       "（依日期子資料夾，如 `%s`）讀取；請從下方清單選擇檔案後"
+                       "按「讀取並儲存」。預期名稱：**`%s`**。"
+                       % (label, cfg.get("folder_path", ""), _mmdd, want))
         try:
-            cand = onedrive.files_in_date_folder(
-                cfg, cfg.get("folder_path", ""), DATE)
+            if is_video:
+                # 家事MP4 可能放在任何子資料夾：搜尋整個 tree，日期夾優先。
+                cand = onedrive.find_mp4s(cfg, cfg.get("folder_path", ""))
+                _sub = onedrive._date_subfolder(
+                    cfg, cfg.get("folder_path", ""), DATE)
+                if _sub:
+                    _datep = ((cfg.get("folder_path", "") or "").rstrip("/")
+                              + "/" + _sub["name"]).strip("/")
+                    cand.sort(key=lambda f: 0 if (f.get("path") or "").strip("/")
+                              .startswith(_datep + "/") else 1)
+            else:
+                cand = onedrive.files_in_date_folder(
+                    cfg, cfg.get("folder_path", ""), DATE)
         except Exception as exc:
             st.error(f"OneDrive 讀取失敗：{exc}")
             return
-        if is_video:
-            cand = [f for f in cand
-                    if (f.get("name") or "").lower().endswith(".mp4")]
-        names = [f.get("name", "") for f in cand]
+        # Display label: 名稱；影片在日期夾外時附上位置。
+        labels = []
+        for f in cand:
+            n = f.get("name", "")
+            p = (f.get("path") or "").strip("/")
+            if is_video and _sub:
+                _datep = ((cfg.get("folder_path", "") or "").rstrip("/")
+                          + "/" + _sub["name"]).strip("/")
+                if p.startswith(_datep + "/") or p == _datep:
+                    labels.append(n)
+                else:
+                    labels.append("%s（%s）" % (n, p or "根目錄"))
+            else:
+                labels.append(n)
         # Preselect: exact canonical name, then any name containing the date.
-        default = None
+        default_i = None
         if want:
-            default = next((n for n in names if n == want), None)
-        if default is None and names:
+            for i, l in enumerate(labels):
+                if l == want or l.startswith(want + "（"):
+                    default_i = i
+                    break
+        if default_i is None:
             variants = onedrive._date_variants(DATE)
-            default = next(
-                (n for n in names
-                 if n.endswith(ext) and any(v in n for v in variants)), None)
-        if default is None and names:
-            default = names[0]
-        if names:
-            picked = st.radio(
+            for i, l in enumerate(labels):
+                base = l.split("（", 1)[0]
+                if base.endswith(ext) and any(v in base for v in variants):
+                    default_i = i
+                    break
+        if default_i is None and labels:
+            default_i = 0
+        if labels:
+            picked_i = st.radio(
                 "選擇要下載的檔案：",
-                names,
-                index=names.index(default) if default in names else 0,
+                range(len(labels)),
+                index=default_i if default_i is not None else 0,
+                format_func=lambda i: labels[i],
                 key=K(f"odrive_pick_{section}"))
+            if is_video and cand[picked_i].get("path"):
+                st.caption("位置：`%s`"
+                           % (cand[picked_i].get("path") or "根目錄"))
+            picked = cand[picked_i]
         else:
             picked = None
-            st.info("該日期資料夾中沒有可下載的%s檔案。"
-                    % ("MP4" if is_video else "簡報"))
+            if is_video:
+                st.info("OneDrive **`%s`** 資料夾中目前找不到任何 "
+                        "**MP4** 檔（含子資料夾）。上載家事影片後即可在此選擇。"
+                        % cfg.get("folder_path", ""))
+            else:
+                st.info("該日期資料夾中沒有可下載的簡報檔。")
         if st.button("⚡ 從 OneDrive 讀取並儲存", type="primary",
                      key=K(f"odrive_fetch_{section}")):
             if not picked:
-                st.warning("資料夾中沒有可下載的檔案。")
-                return
-            f = next((x for x in cand if x.get("name") == picked), None)
-            if f is None:
-                st.warning("找不到所選檔案。")
+                st.warning("沒有可下載的檔案。")
                 return
             try:
                 if is_video:
-                    name = _od_fetch_video(cfg, f)
+                    name = _od_fetch_video(cfg, picked)
                 else:
-                    name = _od_fetch_section(section, DATE, cfg, f)
+                    name = _od_fetch_section(section, DATE, cfg, picked)
             except Exception as exc:
                 st.error(f"OneDrive 讀取失敗：{exc}")
             else:
@@ -750,8 +787,12 @@ def set_active(date, seed_week=None):
 
 
 def _seed_hymns(week):
+    hymns = week.get("hymns") or []
+    if not hymns:
+        # 預設：詩歌敬拜 3 首、歌詞空白。
+        hymns = [{} for _ in range(3)]
     out = []
-    for h in week.get("hymns", []):
+    for h in hymns:
         out.append({
             "_id": uuid.uuid4().hex[:8],
             "title": h.get("title", ""),
