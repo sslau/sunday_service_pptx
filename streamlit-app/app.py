@@ -85,27 +85,29 @@ def _auth_ok():
     return bool(st.session_state.get("auth_ok", False))
 
 
+def sv(name, default=""):
+    return st.session_state.get(K(name), default)
+
+
 if not _auth_ok():
     with st.container(border=True):
         st.subheader("🔒 崇拜投影片編輯器 — 請登入")
-        pw = st.text_input("密碼", type="password", key=K("gate_password"),
-                           placeholder="請輸入密碼")
-        if st.button("登入", type="primary", key=K("gate_login")):
-            if APP_PASSWORD is None:
-                st.warning("尚未設定 app_password（在 Settings → Secrets）。"
-                           "未設定密碼前先放行。")
-                st.session_state["auth_ok"] = True
-                st.rerun()
-            elif pw == APP_PASSWORD:
-                st.session_state["auth_ok"] = True
-                st.rerun()
-            else:
-                st.error("密碼錯誤，請重試。")
+        with st.form(K("gate_form"), clear_on_submit=False):
+            st.text_input("密碼", type="password", key=K("gate_password"),
+                          placeholder="請輸入密碼後按 Enter 或「登入」")
+            submitted = st.form_submit_button("登入", type="primary")
+    if submitted:
+        if APP_PASSWORD is None:
+            st.warning("尚未設定 app_password（在 Settings → Secrets）。"
+                       "未設定密碼前先放行。")
+            st.session_state["auth_ok"] = True
+            st.rerun()
+        elif sv("gate_password") == APP_PASSWORD:
+            st.session_state["auth_ok"] = True
+            st.rerun()
+        else:
+            st.error("密碼錯誤，請重試。")
     st.stop()
-
-
-def sv(name, default=""):
-    return st.session_state.get(K(name), default)
 
 
 def song_bg_files():
@@ -2220,12 +2222,8 @@ with tab_build:
         _wmap = {"songs": "songs", "offering": "offering",
                  "response": "response", "sermon": "sermon",
                  "announcements": "ann"}
-        for label, sec in (
-                ("🎵 詩歌敬拜", "songs"),
-                ("🙌 獻詩", "offering"),
-                ("🎶 詩歌回應", "response"),
-                ("🗣 講道信息", "sermon"),
-                ("📋 家事分享", "announcements")):
+
+        def _sec_row(label, sec):
             up = st.session_state.get(K("build_" + _wmap[sec]))
             name = st.session_state.get(K("build_" + _wmap[sec] + "_name"))
             text, kind = section_source(up, name, sec, DATE, use_saved)
@@ -2236,14 +2234,33 @@ with tab_build:
                 r2.button("✖ 移除", key=K(f"clear_{sec}"),
                           use_container_width=True,
                           on_click=_signal_clear, args=(DATE, sec),
-help="移除該節的上載並刪除已儲存的 pptx，"
-                                "恢復用網頁內容編譯")
+                          help="移除該節的上載並刪除已儲存的 pptx，"
+                               "恢復用網頁內容編譯")
+
+        def _text_row(_pfx, _lbl):
+            _ref = sv(f"{_pfx}_ref", "").strip()
+            _verses = split_lines(sv(f"{_pfx}_verses", ""))
+            if _ref and _verses:
+                st.markdown(f"✅ **{_lbl}** — {_ref}（{len(_verses)} 行）")
+            elif _ref:
+                st.markdown(f"⚠️ **{_lbl}** — 出處「{_ref}」已填，內容空白")
+            else:
+                st.markdown(f"🧩 **{_lbl}** — 未填寫")
+
+        # 順序與「✏️ 編輯內容」一致
+        _text_row("psalm", "📖 宣召經文")
+        _sec_row("🎵 詩歌敬拜", "songs")
+        _sec_row("🙌 獻詩", "offering")
+        _text_row("scripture", "📖 讀經經文")
+        _sec_row("🗣 講道信息", "sermon")
+        _sec_row("🎶 詩歌回應", "response")
         if sv("communion", is_first_sunday(DATE)):
             st.markdown("✅ **聖餐＋使徒信經** — 已加入")
         else:
             st.markdown("⬜ **聖餐＋使徒信經** — 未加入"
                         + ("（第一主日建議勾選）"
                            if is_first_sunday(DATE) else ""))
+        _sec_row("📋 家事分享", "announcements")
         vid_ok = (st.session_state.get(K("video_data")) is not None
                   or saved_video_mp4(DATE) is not None)
         if vid_ok:
