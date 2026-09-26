@@ -15,5 +15,7 @@ venv/
 data/weeks.json
 data/decks/
 data/downloads/
+data/login_log.json
+data/sessions.json
 
 .DS_Store

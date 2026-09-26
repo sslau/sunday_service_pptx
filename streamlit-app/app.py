@@ -26,6 +26,7 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
 
 import bible  # noqa: E402
 import gdrive  # noqa: E402
+import login_log  # noqa: E402
 import onedrive  # noqa: E402
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
@@ -89,6 +90,29 @@ def sv(name, default=""):
     return st.session_state.get(K(name), default)
 
 
+def _request_meta():
+    """Best-effort remote IP + user agent for the login log."""
+    try:
+        h = dict(st.context.headers or {})
+    except Exception:
+        return {"ip": "", "ua": ""}
+    ip = (h.get("X-Forwarded-For") or h.get("X-Real-IP")
+          or h.get("Remote-Addr") or "")
+    return {"ip": ip, "ua": h.get("User-Agent", "")}
+
+
+def _log_action(label, detail=""):
+    """Record one important action in the current login session's summary
+    row of the "sessions" worksheet (Google Sheet)."""
+    sess = st.session_state.get("auth_session")
+    if not sess:
+        return
+    try:
+        login_log.log_action(sess, label, detail, secrets=st_secrets)
+    except Exception:
+        pass
+
+
 if not _auth_ok():
     with st.container(border=True):
         st.subheader("🔒 崇拜投影片編輯器 — 請登入")
@@ -97,16 +121,25 @@ if not _auth_ok():
                           placeholder="請輸入密碼後按 Enter 或「登入」")
             submitted = st.form_submit_button("登入", type="primary")
     if submitted:
+        meta = _request_meta()
+        ok = False
         if APP_PASSWORD is None:
             st.warning("尚未設定 app_password（在 Settings → Secrets）。"
                        "未設定密碼前先放行。")
-            st.session_state["auth_ok"] = True
-            st.rerun()
+            ok = True
         elif sv("gate_password") == APP_PASSWORD:
-            st.session_state["auth_ok"] = True
-            st.rerun()
+            ok = True
         else:
             st.error("密碼錯誤，請重試。")
+        login_log.append_login("success" if ok else "failed", **meta,
+                               secrets=st_secrets)
+        if ok:
+            sess = uuid.uuid4().hex[:8]
+            st.session_state["auth_session"] = sess
+            login_log.new_session(sess, ip=meta.get("ip", ""),
+                                  ua=meta.get("ua", ""), secrets=st_secrets)
+            st.session_state["auth_ok"] = True
+            st.rerun()
     st.stop()
 
 
@@ -256,6 +289,7 @@ def section_deck_panel(sec_key, build_sec, save_sec, label, dl_name,
             st.session_state[K(f"sec_date_{sec_key}")] = DATE
             st.toast("已產生並儲存 "
                      + (os.path.basename(path) if path else "已產生"))
+            _log_action("產生並儲存 " + label, DATE)
         except Exception as exc:
             st.error(f"產生失敗：{exc}")
     b = st.session_state.get(K(f"sec_bytes_{sec_key}"))
@@ -591,6 +625,7 @@ def _odrive_panel(section, label, is_video=False):
             else:
                 if name:
                     st.success(f"已從 OneDrive 讀取：{name}")
+                    _log_action("OneDrive 讀取 " + label, name)
                 else:
                     st.warning("下載未完成，請再試一次。")
 
@@ -747,6 +782,7 @@ def persist_uploads(date, uploads):
             st.session_state[f"{date}::build_{wkey}_name"] = \
                 getattr(up, "name", "") or ""
             save_upload_name(sec, date, getattr(up, "name", "") or "")
+            _log_action("上載 " + sec, getattr(up, "name", "") or "")
 
 
 def _signal_clear(date, section):
@@ -1841,6 +1877,7 @@ def _render_scr_flow():
             st.session_state["scrflow_bytes"] = data
             st.session_state["scrflow_count"] = count
             st.success(f"完成：{count} 頁（獨立流程，只含讀經經文）")
+            _log_action("製成經文投影片", f"{DATE} · {count} 頁")
         except Exception as exc:
             st.error(f"製成失敗：{exc}")
 
@@ -1897,6 +1934,7 @@ with st.sidebar:
             store.save(week_to_save)
             st.cache_data.clear()
             st.toast(f"已儲存 {week_to_save['date']}")
+            _log_action("儲存內容", week_to_save["date"])
 
     gen_clicked = st.button("📽 製成整場投影片（合併＋編譯）", type="primary",
                             use_container_width=True, key=K("generate"))
@@ -2359,6 +2397,7 @@ with gen_slot:
                 st.success(f"完成：{slide_count} 頁，影片已併入第一頁。")
             else:
                 st.success(f"完成：{slide_count} 頁")
+            _log_action("製成整場投影片", f"{DATE} · {slide_count} 頁")
             if missing:
                 st.warning("以下檔名找不到，已改用已儲存檔案或網頁內容編譯："
                            + "；".join(missing))
