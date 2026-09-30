@@ -901,45 +901,73 @@ def _seed_fields(date, week):
         st.session_state[f"{date}::{name}"] = val
 
 
+def _draft_for(date):
+    """Plain (non-widget) dict holding unsaved edits for `date`.
+
+    Streamlit deletes a widget-created session_state key as soon as that widget
+    leaves the rendered tree, so simply leaving a step discards whatever the
+    user typed there. This dict is not a widget key, so it is never deleted; it
+    is what _lapse() refills from.  It lives under the `f"{date}::"` prefix, so
+    clear_date_state() drops it on a date switch."""
+    return st.session_state.setdefault(f"{date}::_draft", {})
+
+
+def _lapse(key, draft, stored):
+    """Keep one widget value alive across the step it is rendered on.
+
+    While the widget still exists, copy its live value into `draft`. When the
+    key is gone (the step was left), refill from the draft so the user's edit
+    survives. `stored` — the last saved value — is only the fallback for a
+    field the user has not touched."""
+    if key in st.session_state:
+        draft[key] = st.session_state[key]
+    st.session_state.setdefault(key, draft.get(key, stored))
+
+
+def _clear_drafts(date):
+    """Drop the unsaved-edit draft for `date` (after a save, or a forced
+    re-read of the store) so later restores fall back to stored data."""
+    st.session_state.pop(f"{date}::_draft", None)
+
+
 def _restore_lapsed_fields(date, week):
-    """Re-instate stored values for editor widget keys that are absent from
-    session state.  Streamlit deletes widget-created session entries as soon
-    as the widget leaves the rendered tree (e.g. switching wizard steps), so a
-    field whose step is not active would otherwise read as empty and wipe the
-    stored week on the next save.  setdefault only fills missing keys, leaving
-    values the user is currently editing untouched."""
+    """Re-instate editor widget values that are absent from session state.
+
+    Streamlit deletes widget-created session entries as soon as the widget
+    leaves the rendered tree (e.g. switching wizard steps). Refilling purely
+    from the stored week would silently discard unsaved edits — ticking 聖餐
+    and stepping away would come back unticked — and a field whose step is not
+    active would otherwise read as empty and wipe the stored week on save.
+    _lapse() prefers the live value, then the draft, then stored data."""
+    draft = _draft_for(date)
     for name, val in _seed_values(week, date).items():
-        st.session_state.setdefault(f"{date}::{name}", val)
+        _lapse(f"{date}::{name}", draft, val)
     hymns = week.get("hymns") or []
     for i, h in enumerate(st.session_state.get(f"{date}::ui_hymns") or []):
         sw = hymns[i] if i < len(hymns) else {}
         base = f"{date}::hymn_{h['_id']}_"
-        st.session_state.setdefault(base + "title", sw.get("title", ""))
-        st.session_state.setdefault(base + "subtitle", sw.get("subtitle", ""))
-        st.session_state.setdefault(base + "source", sw.get("source", ""))
-        st.session_state.setdefault(base + "music", sw.get("music", ""))
-        st.session_state.setdefault(base + "lyricist", sw.get("lyricist", ""))
-        st.session_state.setdefault(base + "bg", sw.get("bg", ""))
-        st.session_state.setdefault(base + "refrain",
-                                    "\n".join(sw.get("refrain") or []))
-        st.session_state.setdefault(
-            base + "repeat", bool(sw.get("refrain_after_every_verse", True)))
+        _lapse(base + "title", draft, sw.get("title", ""))
+        _lapse(base + "subtitle", draft, sw.get("subtitle", ""))
+        _lapse(base + "source", draft, sw.get("source", ""))
+        _lapse(base + "music", draft, sw.get("music", ""))
+        _lapse(base + "lyricist", draft, sw.get("lyricist", ""))
+        _lapse(base + "bg", draft, sw.get("bg", ""))
+        _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
+        _lapse(base + "repeat", draft,
+               bool(sw.get("refrain_after_every_verse", True)))
         for j, stanza in enumerate(sw.get("verses", [])):
-            st.session_state.setdefault(f"{base}verses_{j}",
-                                        "\n".join(stanza))
+            _lapse(f"{base}verses_{j}", draft, "\n".join(stanza))
     slides = (week.get("sermon") or {}).get("slides") or []
     for i, s in enumerate(st.session_state.get(f"{date}::ui_slides") or []):
         sw = slides[i] if i < len(slides) else {}
         base = f"{date}::slide_{s['_id']}_"
-        st.session_state.setdefault(base + "title", sw.get("title", ""))
-        st.session_state.setdefault(base + "body",
-                                    "\n".join(sw.get("body") or []))
+        _lapse(base + "title", draft, sw.get("title", ""))
+        _lapse(base + "body", draft, "\n".join(sw.get("body") or []))
     rverses = (week.get("response") or {}).get("verses") or []
     ui_r = st.session_state.get(f"{date}::ui_resp") or []
     for j in range(max(len(ui_r), len(rverses), 1)):
-        st.session_state.setdefault(
-            f"{date}::resp_verses_{j}",
-            "\n".join(rverses[j]) if j < len(rverses) else "")
+        _lapse(f"{date}::resp_verses_{j}", draft,
+               "\n".join(rverses[j]) if j < len(rverses) else "")
 
 
 def _seed_response_fields(date, week):
@@ -1436,6 +1464,7 @@ def _fetch_into(ref_key, target_key, section=None):
             cur["verses"] = split_lines(text)
             week[section] = cur
             store.save(week)
+            _clear_drafts(DATE)
             st.cache_data.clear()
         except Exception as exc:
             st.session_state[err_key] = (
@@ -1971,6 +2000,7 @@ with st.sidebar:
     if st.button("🔄 重新載入 Google Sheet", use_container_width=True,
                  key=K("reload_sheet"), help="清除快取，立即重讀 Google Sheet（手動在 Sheet 改過資料時用）"):
         invalidate()
+        _clear_drafts(DATE)
         st.cache_data.clear()
         st.rerun()
 
@@ -1988,6 +2018,7 @@ with st.sidebar:
             st.error("日期格式應為 2026.09.20")
         else:
             store.save(week_to_save)
+            _clear_drafts(DATE)
             st.cache_data.clear()
             st.toast(f"已儲存 {week_to_save['date']}")
             _log_action("儲存內容", week_to_save["date"])
