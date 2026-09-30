@@ -223,25 +223,6 @@ def _uploaded_name(upload):
     return (getattr(upload, "name", "") or "").strip() or None
 
 
-def section_source(upload, name, section, date, use_saved):
-    """Where a section's slides will come from, for the readiness indicator."""
-    if upload is not None:
-        fname = _uploaded_name(upload)
-        if fname:
-            return f"已上載檔案（合併）：{fname}", "ready"
-        return "已上載檔案（合併）", "ready"
-    path = resolve_deck_path(name) if name else None
-    if path:
-        return f"使用檔案：{os.path.basename(path)}", "ready"
-    if use_saved:
-        saved = saved_section_path(section, date)
-        if saved:
-            if name:
-                return f"使用已上載：{os.path.basename(name)}（已儲存）", "saved"
-            return f"使用已儲存：{os.path.basename(saved)}", "saved"
-    return "由網頁內容編譯", "compile"
-
-
 def _deck_present(section, upload_key=None):
     """(text, present) describing the deck a section already has, or (None, False)
     when it has none.  Names the file it actually came from: an upload's own
@@ -264,18 +245,6 @@ def _deck_present(section, upload_key=None):
     shown = orig or os.path.basename(path)
     where = "已從雲端讀取" if orig else "已儲存"
     return f"{where}：**{shown}**（製成整場時以該檔案為準）", True
-
-
-def _clear_deck_button(section, label):
-    """✖ 清除 button that deletes a section's deck so it can be fetched or
-    compiled again.  Renders nothing when the section has no deck."""
-    if not _deck_present(section)[1]:
-        return
-    r1, r2 = st.columns([0.76, 0.24], vertical_alignment="center")
-    r2.button("✖ 清除", key=K(f"clr_{section}"), use_container_width=True,
-              on_click=_signal_clear, args=(DATE, section),
-              help=f"刪除{label}已讀取／上載的 pptx 與記錄，"
-                   "讓你可以重新從雲端讀取或改用網頁內容編譯")
 
 
 def _cloud_deck_status(section, label, upload_key=None):
@@ -2395,48 +2364,55 @@ with tab_build:
             help="勾選：製成整場時，直接合併先前個別產生的各節 pptx 檔"
                  "（含已上載的檔案），不需要重新編譯。"
                  "取消：全部改用網頁上編輯的內容現場編譯。")
-        _wmap = {"songs": "songs", "offering": "offering",
-                 "response": "response", "sermon": "sermon",
-                 "announcements": "ann"}
-
-        def _sec_row(label, sec):
-            up = st.session_state.get(K("build_" + _wmap[sec]))
-            name = st.session_state.get(K("build_" + _wmap[sec] + "_name"))
-            text, kind = section_source(up, name, sec, DATE, use_saved)
-            icon = {"ready": "✅", "saved": "💾", "compile": "🧩"}[kind]
+        def _row(label, sec, upload_key=None, fallback=None):
+            """One 步驟狀態 line.  A section with a deck on disk is named by that
+            deck — by the filename it was fetched/uploaded under, not the local
+            re-write — with a ✖ 移除 button.  `fallback` is used for sections
+            with no deck, so text-only ones still report their content."""
+            text, present = _deck_present(sec, upload_key)
+            if not present:
+                if fallback is None:
+                    st.markdown(f"🧩 **{label}** — 由網頁內容編譯")
+                else:
+                    st.markdown(fallback)
+                return
+            note = ("" if use_saved
+                    else "　⚠️「合併先前各步驟投影片檔」已取消，實際不會用到。")
             r1, r2 = st.columns([0.78, 0.22], vertical_alignment="center")
-            r1.markdown(f"{icon} **{label}** — {text}")
-            if kind != "compile":
-                r2.button("✖ 移除", key=K(f"clear_{sec}"),
-                          use_container_width=True,
-                          on_click=_signal_clear, args=(DATE, sec),
-                          help="移除該節的上載並刪除已儲存的 pptx，"
-                               "恢復用網頁內容編譯")
+            r1.markdown(f"✅ **{label}** — {text}{note}")
+            r2.button("✖ 移除", key=K(f"clear_{sec}"),
+                      use_container_width=True,
+                      on_click=_signal_clear, args=(DATE, sec),
+                      help=f"移除{label}的上載／已讀取檔案並刪除已儲存的 pptx，"
+                           "恢復用網頁內容編譯")
 
-        def _text_row(_pfx, _lbl):
+        def _verses_fallback(_pfx, _lbl):
+            """Status for a scripture section with no deck: report the verse text
+            that will be compiled instead."""
             _ref = sv(f"{_pfx}_ref", "").strip()
             _verses = split_lines(sv(f"{_pfx}_verses", ""))
             if _ref and _verses:
-                st.markdown(f"✅ **{_lbl}** — {_ref}（{len(_verses)} 行）")
-            elif _ref:
-                st.markdown(f"⚠️ **{_lbl}** — 出處「{_ref}」已填，內容空白")
-            else:
-                st.markdown(f"🧩 **{_lbl}** — 未填寫")
+                return f"✅ **{_lbl}** — {_ref}（{len(_verses)} 行）"
+            if _ref:
+                return f"⚠️ **{_lbl}** — 出處「{_ref}」已填，內容空白"
+            return f"🧩 **{_lbl}** — 未填寫"
 
         # 順序與「✏️ 編輯內容」一致
-        _text_row("psalm", "📖 宣召經文")
-        _sec_row("🎵 詩歌敬拜", "songs")
-        _sec_row("🙌 獻詩", "offering")
-        _text_row("scripture", "📖 讀經經文")
-        _sec_row("🗣 講道信息", "sermon")
-        _sec_row("🎶 詩歌回應", "response")
-        if sv("communion", is_first_sunday(DATE)):
-            st.markdown("✅ **聖餐＋使徒信經** — 已加入")
-        else:
-            st.markdown("⬜ **聖餐＋使徒信經** — 未加入"
-                        + ("（第一主日建議勾選）"
-                           if is_first_sunday(DATE) else ""))
-        _sec_row("📋 家事分享", "announcements")
+        _row("📖 宣召經文", "psalm",
+             fallback=_verses_fallback("psalm", "📖 宣召經文"))
+        _row("🎵 詩歌敬拜", "songs", "build_songs")
+        _row("🙌 獻詩", "offering", "build_offering")
+        _row("📖 讀經經文", "scripture",
+             fallback=_verses_fallback("scripture", "📖 讀經經文"))
+        _row("🗣 講道信息", "sermon", "build_sermon")
+        _row("🎶 詩歌回應", "response", "build_response")
+        _communion_fallback = (
+            "✅ **🍞 聖餐＋使徒信經** — 已加入"
+            if sv("communion", is_first_sunday(DATE))
+            else "⬜ **🍞 聖餐＋使徒信經** — 未加入"
+                 + ("（第一主日建議勾選）" if is_first_sunday(DATE) else ""))
+        _row("🍞 聖餐＋使徒信經", "communion", fallback=_communion_fallback)
+        _row("📋 家事分享", "announcements", "build_ann")
         vid_ok = (st.session_state.get(K("video_data")) is not None
                   or saved_video_mp4(DATE) is not None)
         if vid_ok:
