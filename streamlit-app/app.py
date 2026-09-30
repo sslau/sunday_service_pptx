@@ -902,26 +902,34 @@ def _seed_fields(date, week):
 
 
 def _draft_for(date):
-    """Plain (non-widget) dict holding unsaved edits for `date`.
+    """Plain (non-widget) dict holding the authoritative field values for `date`.
 
-    Streamlit deletes a widget-created session_state key as soon as that widget
-    leaves the rendered tree, so simply leaving a step discards whatever the
-    user typed there. This dict is not a widget key, so it is never deleted; it
-    is what _lapse() refills from.  It lives under the `f"{date}::"` prefix, so
-    clear_date_state() drops it on a date switch."""
+    Editor widgets are re-created on every rerun, and a widget declared with both
+    `value=` and `key=` has its session key reset to that `value` each time. So
+    the widget key cannot be trusted to remember an edit once its step has been
+    left — this dict is what does. It is not a widget key, so Streamlit never
+    touches it, and it lives under the `f"{date}::"` prefix so clear_date_state()
+    drops it when switching dates."""
     return st.session_state.setdefault(f"{date}::_draft", {})
 
 
 def _lapse(key, draft, stored):
-    """Keep one widget value alive across the step it is rendered on.
+    """Keep one editor field's value alive across the step it is rendered on.
 
-    While the widget still exists, copy its live value into `draft`. When the
-    key is gone (the step was left), refill from the draft so the user's edit
-    survives. `stored` — the last saved value — is only the fallback for a
-    field the user has not touched."""
-    if key in st.session_state:
-        draft[key] = st.session_state[key]
-    st.session_state.setdefault(key, draft.get(key, stored))
+    The draft is authoritative. Each run the widget key is forced back to the
+    draft, which makes the widget's own `value=` re-seed a no-op, so leaving a
+    step and returning shows the edit the user made rather than the stored
+    default. A value that *differs* from the draft can only have come from the
+    user interacting with the live widget, so that is what gets recorded.
+
+    `stored` — the last saved value — seeds fields the user has not touched."""
+    if key in draft:
+        current = st.session_state.get(key, draft[key])
+        if current != draft[key]:
+            draft[key] = current
+        st.session_state[key] = draft[key]
+    else:
+        draft[key] = st.session_state.setdefault(key, stored)
 
 
 def _clear_drafts(date):
@@ -931,14 +939,16 @@ def _clear_drafts(date):
 
 
 def _restore_lapsed_fields(date, week):
-    """Re-instate editor widget values that are absent from session state.
+    """Keep every editor field's value consistent as steps come and go.
 
-    Streamlit deletes widget-created session entries as soon as the widget
-    leaves the rendered tree (e.g. switching wizard steps). Refilling purely
-    from the stored week would silently discard unsaved edits — ticking 聖餐
-    and stepping away would come back unticked — and a field whose step is not
-    active would otherwise read as empty and wipe the stored week on save.
-    _lapse() prefers the live value, then the draft, then stored data."""
+    Editor widgets are rebuilt on each rerun and any widget declared with both
+    `value=` and `key=` has its session key reset to that `value`, so a field
+    whose step is off-screen falls back to the last *saved* value. That silently
+    discarded unsaved edits — ticking 聖餐, stepping to 宣召經文 and back left it
+    unticked — and a field whose step is not active would otherwise read as
+    empty and wipe the stored week on save. _lapse() runs each field through the
+    per-date draft, which holds the authoritative value: live edit if the user
+    just touched it, otherwise the draft, otherwise stored data."""
     draft = _draft_for(date)
     for name, val in _seed_values(week, date).items():
         _lapse(f"{date}::{name}", draft, val)
