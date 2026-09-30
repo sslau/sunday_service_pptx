@@ -242,31 +242,59 @@ def section_source(upload, name, section, date, use_saved):
     return "由網頁內容編譯", "compile"
 
 
-def section_ready(section, name_key, label, upload_key=None):
-    """Edit-wizard caption when the section already has an uploaded/found pptx
-    (mirrors the build-tab status), else None. `upload_key` is the file-uploader
-    widget key so an uploaded deck's original filename can be shown."""
+def _deck_present(section, upload_key=None):
+    """(text, present) describing the deck a section already has, or (None, False)
+    when it has none.  Names the file it actually came from: an upload's own
+    name, else the name recorded when it was fetched from OneDrive/Google Drive,
+    else the local save name.  The fetched name is preferred because that is the
+    file the user picked in the cloud folder; the local name is a canonical
+    re-write of it."""
+    wkey = "ann" if section == "announcements" else section
     up = st.session_state.get(K(upload_key)) if upload_key else None
     if up is not None:
         fname = _uploaded_name(up)
-        if fname:
-            return (f"✅ 已上載 {label} .pptx：**{fname}**"
-                    "（製成整場時以該檔案為準）")
-        return f"✅ 已上載 {label} .pptx（製成整場時以該檔案為準）"
-    name = st.session_state.get(K(name_key))
+        return ("已上載檔案（合併）" + (f"：**{fname}**" if fname else ""), True)
+    name = st.session_state.get(K(f"build_{wkey}_name"))
     path = resolve_deck_path(name) if name else None
-    if path:
-        return (f"✅ 已有現成的 {label} .pptx：使用檔案 "
-                f"{os.path.basename(path)}")
-    if sv("use_saved", True):
-        saved = saved_section_path(section, DATE)
-        if saved:
-            if name:
-                return (f"✅ 已上載 {label} .pptx：**{os.path.basename(name)}**"
-                        "（已儲存，製成整場時以該檔案為準）")
-            return (f"✅ 已有現成的 {label} .pptx（已上載／已儲存），"
-                    "製成整場時以該檔案為準。")
-    return None
+    if not path:
+        path = saved_section_path(section, DATE)
+    if not path:
+        return None, False
+    orig = (load_upload_names(DATE) or {}).get(section)
+    shown = orig or os.path.basename(path)
+    where = "已從雲端讀取" if orig else "已儲存"
+    return f"{where}：**{shown}**（製成整場時以該檔案為準）", True
+
+
+def _clear_deck_button(section, label):
+    """✖ 清除 button that deletes a section's deck so it can be fetched or
+    compiled again.  Renders nothing when the section has no deck."""
+    if not _deck_present(section)[1]:
+        return
+    r1, r2 = st.columns([0.76, 0.24], vertical_alignment="center")
+    r2.button("✖ 清除", key=K(f"clr_{section}"), use_container_width=True,
+              on_click=_signal_clear, args=(DATE, section),
+              help=f"刪除{label}已讀取／上載的 pptx 與記錄，"
+                   "讓你可以重新從雲端讀取或改用網頁內容編譯")
+
+
+def _cloud_deck_status(section, label, upload_key=None):
+    """Status row for a section that may already have a deck, with a ✖ button to
+    clear it.  Returns True when a deck is present, so the caller can skip its
+    plain "nothing here yet" caption."""
+    text, present = _deck_present(section, upload_key)
+    if not present:
+        return False
+    line = f"✅ **{label}** — {text}"
+    if not sv("use_saved", True):
+        line += "　⚠️「合併先前各步驟投影片檔」已取消，實際不會用到此檔案。"
+    r1, r2 = st.columns([0.76, 0.24], vertical_alignment="center")
+    r1.markdown(line)
+    r2.button("✖ 清除", key=K(f"clr_{section}"), use_container_width=True,
+              on_click=_signal_clear, args=(DATE, section),
+              help=f"刪除{label}已讀取／上載的 pptx 與記錄，"
+                   "讓你可以重新從雲端讀取或改用網頁內容編譯")
+    return True
 
 
 def section_deck_panel(sec_key, build_sec, save_sec, label, dl_name,
@@ -1028,7 +1056,8 @@ _restore_lapsed_fields(DATE, week)
 # The ✖ buttons in 製成選項與來源狀態 set these flags; they are processed here
 # at the top of the run — before the file_uploader widgets are instantiated —
 # so their session keys can be safely popped and the page rerun.
-_SECTION_KEYS = ("songs", "offering", "response", "sermon", "announcements")
+_SECTION_KEYS = ("songs", "offering", "response", "sermon", "announcements",
+                 "psalm", "scripture", "communion")
 _cleared = False
 for _sec in _SECTION_KEYS:
     _wkey = "ann" if _sec == "announcements" else _sec
@@ -2086,6 +2115,9 @@ with tab_edit:
             section_header("1", "宣召經文", "貼上整段經文，自動分頁")
             _odrive_panel("psalm", "宣召經文")
             _gdrive_panel("psalm", "宣召經文")
+            if not _cloud_deck_status("psalm", "宣召經文"):
+                st.caption("尚未讀取 `psalm_<日期>.pptx`；下方仍可直接貼上經文"
+                           "由網頁內容編譯。")
             _scripture_editor("psalm", "psalm")
 
     elif step == 2:
@@ -2096,9 +2128,9 @@ with tab_edit:
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
                                btn="🎵 產生詩歌投影片")
-            ready = section_ready("songs", "build_songs_name", "詩歌", "build_songs")
-            st.caption(ready or "以下內容以網頁內容現場編譯；上載 .pptx 時"
-                       "以檔案為準，字型／項目符號沿用來源檔。")
+            if not _cloud_deck_status("songs", "詩歌", "build_songs"):
+                st.caption("以下內容以網頁內容現場編譯；上載 .pptx 時"
+                           "以檔案為準，字型／項目符號沿用來源檔。")
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
@@ -2196,10 +2228,7 @@ with tab_edit:
             _odrive_panel("offering", "獻詩")
             _gdrive_panel("offering", "獻詩")
             section_deck_panel("offering", None, "offering", "獻詩", None)
-            ready = section_ready("offering", "build_offering_name", "獻詩", "build_offering")
-            if ready:
-                st.caption(ready)
-            else:
+            if not _cloud_deck_status("offering", "獻詩", "build_offering"):
                 st.info("此節只接受現成 .pptx：上載後製成整場時以檔案為準；"
                         "未上載則此節不加入。上載檔在 Server 重啟後可能遺失，"
                         "請當日完成整場製作。")
@@ -2209,6 +2238,9 @@ with tab_edit:
             section_header("4", "讀經經文", "貼上整段經文，自動分頁")
             _odrive_panel("scripture", "讀經經文")
             _gdrive_panel("scripture", "讀經經文")
+            if not _cloud_deck_status("scripture", "讀經經文"):
+                st.caption("尚未讀取 `scripture_<日期>.pptx`；下方仍可直接貼上經文"
+                           "由網頁內容編譯。")
             _scripture_editor("scripture", "scripture")
 
     elif step == 5:
@@ -2219,10 +2251,7 @@ with tab_edit:
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
                                btn="🗣 產生講道投影片")
-            ready = section_ready("sermon", "build_sermon_name", "講道", "build_sermon")
-            if ready:
-                st.caption(ready)
-            else:
+            if not _cloud_deck_status("sermon", "講道", "build_sermon"):
                 st.info("此節以現成 .pptx 為準；上載後製成整場時以該檔案為準。"
                         "上載檔在 Server 重啟後可能遺失，請當日完成整場製作。")
 
@@ -2235,11 +2264,10 @@ with tab_edit:
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
                                btn="🎶 產生詩歌回應投影片")
-            ready = section_ready("response", "build_response_name", "詩歌回應",
-                              "build_response")
-            st.caption(ready or "此節**可選**：不需要可直接按「下一步」略過。"
-                       "要加入時，可填寫以下內容現場編譯；"
-                       "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
+            if not _cloud_deck_status("response", "詩歌回應", "build_response"):
+                st.caption("此節**可選**：不需要可直接按「下一步」略過。"
+                           "要加入時，可填寫以下內容現場編譯；"
+                           "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             _song_font_selector(
                 "歌詞字級（pt）",
                 hint="與「詩歌敬拜」共用同一設定（48–54pt）。")
@@ -2286,8 +2314,9 @@ with tab_edit:
             section_header("7", "聖餐（Communion）")
             _odrive_panel("communion", "聖餐")
             _gdrive_panel("communion", "聖餐")
-            st.caption("若從雲端取回 `communion_<日期>.pptx`，會**取代**內建的"
-                       "聖餐＋使徒信經兩頁；此時不必另外勾選聖餐。")
+            if not _cloud_deck_status("communion", "聖餐"):
+                st.caption("若從雲端取回 `communion_<日期>.pptx`，會**取代**內建的"
+                           "聖餐＋使徒信經兩頁；此時不必另外勾選聖餐。")
             st.checkbox("聖餐（第一主日：加聖餐＋使徒信經頁）",
                         value=sv("communion", is_first_sunday(DATE)),
                         key=K("communion"))
@@ -2309,10 +2338,7 @@ with tab_edit:
                                f"announcements_{DATE}.pptx",
                                btn="📋 產生家事分享投影片",
                                widget="ann")
-            ready = section_ready("announcements", "build_ann_name", "家事分享", "build_ann")
-            if ready:
-                st.caption(ready)
-            else:
+            if not _cloud_deck_status("announcements", "家事分享", "build_ann"):
                 st.info("此節以現成 .pptx，或以已輸入的家事分享內容編譯；"
                         "上載後以檔案為準。")
 
