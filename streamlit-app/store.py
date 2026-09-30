@@ -32,9 +32,20 @@ Secrets layout for the Sheets backend (secrets.toml):
 '''
 import json
 import os
+import time
 
 SHEET_NAME = "weeks"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+
+# Streamlit re-runs the whole script on every click, and `get_store()` is called
+# at import time — so authorizing with Google and pulling the sheet used to
+# happen on every interaction.  Both are cached here, in the server process:
+#   _STORE_CACHE  keeps the SheetsStore (and its gspread/HTTP session) alive,
+#                 which removes the multi-second authorize() from each rerun.
+#   _CACHE_TTL    bounds how stale the parsed rows can get, so edits made in the
+#                 sheet by hand still show up within TTL seconds.
+_STORE_CACHE = {}
+CACHE_TTL = 30.0
 
 
 def _sa_dict(secrets):
@@ -50,7 +61,10 @@ class LocalStore:
     def __init__(self, path):
         self.path = path
 
-    def all(self):
+    def refresh(self):
+        """No-op: a local JSON file is already read fresh every time."""
+
+    def all(self, fresh=False):
         try:
             with open(self.path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -58,7 +72,7 @@ class LocalStore:
         except (OSError, ValueError):
             return {}
 
-    def get(self, date):
+    def get(self, date, fresh=False):
         return self.all().get(date)
 
     def save(self, week):
@@ -95,6 +109,7 @@ class SheetsStore:
         if self.ws is None:
             self.ws = self.sheet.add_worksheet(SHEET_NAME, rows=100, cols=3)
             self.ws.update("A1:C1", [["date", "json", "updatedAt"]])
+        self._cache = None          # (expires_at, {date: week})
 
     def _rows(self):
         try:
@@ -102,7 +117,20 @@ class SheetsStore:
         except Exception:
             return []
 
-    def all(self):
+    def refresh(self):
+        """Drop the cached rows so the next read goes back to the sheet."""
+        self._cache = None
+
+    def all(self, fresh=False):
+        """Weeks keyed by date.
+
+        Served from `_cache` for CACHE_TTL seconds.  The date→week mapping is copied
+        on the way out so a caller mutating the result cannot poison the
+        cache; the week dicts themselves are shared, and every caller runs
+        them through `normalize_week`, which copies."""
+        now = time.monotonic()
+        if not fresh and self._cache and self._cache[0] > now:
+            return dict(self._cache[1])
         out = {}
         rows = self._rows()
         for row in rows[1:]:
@@ -114,36 +142,57 @@ class SheetsStore:
                         out[row[0]] = week
                 except (TypeError, ValueError):
                     continue
-        return out
+        self._cache = (now + CACHE_TTL, out)
+        return dict(out)
 
-    def get(self, date):
-        return self.all().get(date)
+    def get(self, date, fresh=False):
+        return self.all(fresh=fresh).get(date)
 
     def save(self, week):
         from datetime import datetime, timezone
 
         date = week.get("date")
-        stale = self.all()
+        stale = dict(self.all())      # copy: `self._cache` is shared
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         stale[date] = week
         rows = [["date", "json", "updatedAt"]]
         for d in sorted(stale.keys()):
             rows.append([d, json.dumps(stale[d], ensure_ascii=False), now])
         self.ws.update(range_name="A1:C%d" % len(rows), values=rows)
+        # The sheet now matches `stale`, so refresh the cache with it instead of
+        # re-reading on the next click.  Only if the write succeeded.
+        self._cache = (time.monotonic() + CACHE_TTL, stale)
 
 
 def get_store(secrets=None, local_path=None):
     """Return a store. `secrets` is the st.secrets dict (or a plain dict); when
     it carries gspread credentials a SheetsStore is returned, otherwise a
-    LocalStore at `local_path` (default: data/weeks.json next to this file)."""
+    LocalStore at `local_path` (default: data/weeks.json next to this file).
+
+    The SheetsStore is cached in `_STORE_CACHE`: building one runs
+    `gspread.authorize()` plus a worksheet lookup, which measured 0.7–6.6s —
+    paid on every Streamlit rerun if not cached."""
     if local_path is None:
         local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "data", "weeks.json")
     sa = _sa_dict(secrets or {})
     spreadsheet = (secrets or {}).get("store", {}).get("spreadsheet")
     if sa and spreadsheet:
+        key = (spreadsheet, sa.get("client_email"))
+        cached = _STORE_CACHE.get(key)
+        if cached is not None:
+            return cached
         try:
-            return SheetsStore(sa, spreadsheet)
+            st = SheetsStore(sa, spreadsheet)
+            _STORE_CACHE[key] = st
+            return st
         except Exception as exc:
             print("SheetsStore init failed (%s); falling back to LocalStore" % exc)
     return LocalStore(local_path)
+
+
+def invalidate():
+    """Drop the cached SheetsStore(s) and their rows — used by 重新整理."""
+    for st in list(_STORE_CACHE.values()):
+        st.refresh()
+    _STORE_CACHE.clear()

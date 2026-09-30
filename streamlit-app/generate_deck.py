@@ -673,8 +673,12 @@ def chunk(lines, max_lines):
 # Chinese line-break (禁則) constraints: a rendered line may END with an opening
 # mark ／ no, it must not END with one; and it must not START with a closing
 # mark (，．；：！？…）.  Ending a line with a comma is fine and idiomatic.
-LINE_OPEN = "「（《〔『“〈"
+LINE_OPEN = "「（《〔『“〈【〖〘"
 LINE_CLOSE = "，。、；：！？」』）】》〉”’!?,.;:…—·"
+# Characters a verse number is made of — a break may never land inside one, or
+# a two-digit marker renders as `1` at the end of a line and `0` at the start
+# of the next.
+DIGIT_RUN = "0123456789:："
 
 
 def _reading_box_lines(pt, box_h_in=5.7):
@@ -688,11 +692,45 @@ def _reading_break(text, start, end, n):
     never starts on a closing mark, and never leaves a single character (e.g.
     `並` in `…馬念，並掃羅。`) dangling at the end of the line.  Prefer taking
     a few extra characters, else a few fewer; falls back to the original cut
-    when no clean point is nearby."""
+    when no clean point is nearby.  A break also never lands inside a `【…】`
+    出處 marker (`【創1:2】` stays whole) nor inside a verse number (`10` must
+    not become `1` + `0` across the line break), and never between a verse
+    number and its text (`…的。 10` must not end a line while `第十節…` starts
+    the next)."""
+    def inside_marker(e):
+        """True if position `e` falls strictly inside a 【…】 run."""
+        opens = text.rfind("【", start, e)
+        return opens != -1 and "】" not in text[opens:e]
+
+    def inside_number(e):
+        """True if position `e` falls strictly inside a digit/colon run."""
+        return text[e - 1] in DIGIT_RUN and text[e] in DIGIT_RUN
+
+    def orphans_number(e):
+        """True if a break here would strand a verse number at the end of the
+        line, away from the verse text that follows it."""
+        i = e - 1
+        while i > start and text[i] in " 　":
+            i -= 1
+        return i > start and text[i] in DIGIT_RUN
+
+    def ok(e):
+        return (start + 1 < e < n and text[e - 1] not in LINE_OPEN
+                and text[e] not in LINE_CLOSE
+                and not inside_marker(e) and not inside_number(e)
+                and not orphans_number(e))
+
     for delta in range(0, 10):
         for e in (end + delta, end - delta):
-            if start + 1 < e < n and text[e - 1] not in LINE_OPEN \
-                    and text[e] not in LINE_CLOSE:
+            if ok(e):
+                return e
+    # Nothing clean nearby: rather than split a marker or a verse number on
+    # the exact cut, take a ragged line further out.
+    for delta in range(10, 40):
+        for e in (end + delta, end - delta):
+            if e >= n:
+                continue
+            if ok(e):
                 return e
     return end
 
@@ -787,6 +825,59 @@ def _reading_pages(text, pt, box_w_in=11.67, inset=0.2, whole_verses=False):
                 pages.append(stack)
             return pages
 
+    # ---- 整段 (paragraph style) --------------------------------------------
+    # Two rules that pull against each other: a verse must never span two
+    # slides, yet the verses sharing a slide still have to read as a paragraph
+    # instead of one verse per line (that is 列表).  So a slide is filled
+    # greedily at verse boundaries and only then wrapped — the verses it holds
+    # become one continuous run of text, wrapped by char count like any prose.
+    has_verses = any(_split_verses(" ".join(p.split())) for p in paras)
+    if has_verses:
+        def fill(units):
+            out, staged = [], []
+            for u in units:
+                if len(wrap(" ".join(staged + [u]))) <= max_lines:
+                    staged.append(u)
+                    continue
+                if staged:
+                    out.append(wrap(" ".join(staged)))
+                    staged = []
+                # `u` opens the next slide — it must seed the new page rather
+                # than become a slide of its own, so following verses can
+                # still join it.  Only a verse taller than a whole slide flows
+                # across several, and then it keeps the pages to itself.
+                rest = " ".join(u.split())
+                while rest:
+                    merged = wrap(rest)
+                    if len(merged) <= max_lines:
+                        break
+                    head = merged[:max_lines]
+                    out.append(head)
+                    rest = rest[sum(len(x) for x in head):].lstrip()
+                staged = [rest] if rest else []
+            if staged:
+                out.append(wrap(" ".join(staged)))
+            return out
+
+        pages, head = [], None
+        for para in paras:
+            joined = " ".join(para.split())
+            if not joined:
+                continue
+            units = _split_verses(joined)
+            if not units:
+                head = joined       # 書卷 heading — rides with the next block
+                continue
+            block = fill(units)
+            if head and block:
+                block[0] = [head] + block[0]
+                head = None
+            pages.extend(block)
+        if head:
+            pages.append([head])
+        return [p for p in pages if p]
+
+    # No verse markers anywhere (hand-typed 經文): plain paragraph wrapping.
     pages, lines = [], []
     for para in paras:
         joined = " ".join(para.split())
@@ -998,10 +1089,13 @@ def _verse_sup_runs(line):
     line — leading, after sentence punctuation, or glued mid-line because
     verses were joined without a separator; the surrounding text stays
     normal. A number is treated as a verse marker only when it follows the
-    line start or sentence punctuation, then a space, a CJK character, a
-    full-width punctuation/bracket, or a letter — so plain numbers inside
-    sentences (dates, counts) are left alone."""
-    pat = re.compile(r"(?:^|[。；，」』）】])(\d{1,3}(?::\d{1,3})?)(?=[ 　]|[一-龥A-Za-z\uFF01-\uFF65])")
+    line start, a space (verses are joined with one), or sentence punctuation,
+    then a space, a CJK character, a full-width punctuation/bracket, or a
+    letter — so plain numbers inside sentences (dates, counts) are left
+    alone.  The lookahead also accepts end-of-line, otherwise a verse number
+    that a wrap left dangling at the end of a line would lose its superscript."""
+    pat = re.compile(r"(?:^|[ 　。；，」』）】])(?<!\d)(\d{1,3}(?::\d{1,3})?)"
+                     r"(?=[ 　]|[一-龥A-Za-z\uFF01-\uFF65]|$)")
     out, pos = [], 0
     for m in pat.finditer(line):
         if m.start() > pos:
@@ -1299,7 +1393,7 @@ def build_section_deck(section, cfg, template=None):
                             max(44, int(sc.get("font_size")
                                         or cfg.get("scripture_font_size", 44))),
                             sc.get("ref_size", 48), typeface,
-                            whole_verses=True)
+                            whole_verses=(sc.get("layout") != "paragraph"))
     elif section == "response":
         build_response_section(pres, cfg)
     else:
@@ -1349,13 +1443,17 @@ def build(pres, cfg):
         os.getcwd(), "media", "call_to_worship.jpg")
     _image_only(pres, call)
 
-    # psalm（宣召經文，自動分頁；字型下限 44pt）
-    if psalm.get("verses"):
-        psalm_font = max(44, int(psalm.get("font_size")
-                                 or cfg.get("psalm_font_size", 44)))
-        psalm_ref = psalm.get("ref_size", 48)
-        _reading_slides(pres, psalm.get("ref"), " ".join(psalm["verses"]),
-                        psalm_font, psalm_ref, typeface, whole_verses=True)
+    # psalm（宣召經文，自動分頁；字型下限 44pt）。psalm_import 開啟時，雲端
+    # （OneDrive／Google Drive）取回的 psalm_<date>.pptx 取代排版輸出。
+    if not import_override(pres, cfg, "psalm_import", "psalm_file",
+                           locate_psalm_file, "psalm"):
+        if psalm.get("verses"):
+            psalm_font = max(44, int(psalm.get("font_size")
+                                     or cfg.get("psalm_font_size", 44)))
+            psalm_ref = psalm.get("ref_size", 48)
+            _reading_slides(pres, psalm.get("ref"), " ".join(psalm["verses"]),
+                            psalm_font, psalm_ref, typeface,
+                            whole_verses=(psalm.get("layout") != "paragraph"))
 
     # 詩歌敬拜 header
     add_image("worship_header")
@@ -1402,16 +1500,19 @@ def build(pres, cfg):
             print("warning: offering pptx not found (%s), skipping"
                   % cfg.get("offering_file", "offering_*.pptx"))
 
-    # 讀經 header + scripture verses（fresh reading slides）
+    # 讀經 header + scripture verses（fresh reading slides）。header 照舊輸出，
+    # 經文頁面則可由雲端 scripture_<date>.pptx 取代。
     add_image("scripture_header")
-    if scripture.get("verses"):
-        scripture_font = max(44, int(scripture.get("font_size")
-                                      or cfg.get("scripture_font_size", 44)))
-        scripture_ref = scripture.get("ref_size", 48)
-        _reading_slides(pres, scripture.get("ref"),
-                        " ".join(scripture["verses"]),
-                        scripture_font, scripture_ref, typeface,
-                        whole_verses=True)
+    if not import_override(pres, cfg, "scripture_import", "scripture_file",
+                           locate_scripture_file, "scripture"):
+        if scripture.get("verses"):
+            scripture_font = max(44, int(scripture.get("font_size")
+                                          or cfg.get("scripture_font_size", 44)))
+            scripture_ref = scripture.get("ref_size", 48)
+            _reading_slides(pres, scripture.get("ref"),
+                            " ".join(scripture["verses"]),
+                            scripture_font, scripture_ref, typeface,
+                            whole_verses=(scripture.get("layout") != "paragraph"))
 
     # 信息 header（always follows 經文）＋（合併講道 pptx）或產生過場/題目/內容
     add_image("sermon_header")
@@ -1457,10 +1558,15 @@ def build(pres, cfg):
     if not response_path and response_has_content:
         build_response_section(pres, cfg)
 
-    # 聖餐、使徒信經（first Sunday only）
-    if cfg.get("communion"):
-        add_image("communion")
-        add_image("apostles_creed")
+    # 聖餐、使徒信經（first Sunday only）。communion_import 開啟時，雲端
+    # communion_<date>.pptx 整組取代內建的聖餐＋使徒信經兩頁。取回檔案本身
+    # 就代表這一場要有自訂聖餐頁，故未勾選聖餐時也會採用。
+    if cfg.get("communion") or cfg.get("communion_import"):
+        if not import_override(pres, cfg, "communion_import", "communion_file",
+                               locate_communion_file, "communion"):
+            if cfg.get("communion"):
+                add_image("communion")
+                add_image("apostles_creed")
 
     # 三一頌
     add_image("doxology")
@@ -1500,12 +1606,15 @@ def plan(cfg):
     count = 1                          # opening
     count += 1                         # call
     psalm = cfg.get("psalm", {})
-    if psalm.get("verses"):
+    psalm_imported = _import_count(cfg, "psalm_import", locate_psalm_file)
+    if psalm_imported is not None:
+        count += psalm_imported
+    elif psalm.get("verses"):
         count += len(_reading_pages(
             " ".join(psalm["verses"]),
             max(44, int(psalm.get("font_size")
                          or cfg.get("psalm_font_size", 44))),
-            whole_verses=True))
+            whole_verses=(psalm.get("layout") != "paragraph")))
     count += 1                         # worship header
     count += _hymn_slide_count(cfg)    # hymns（或匯入 songs_slides pptx）
     count += 2                         # prayer header + lordsprayer
@@ -1518,12 +1627,16 @@ def plan(cfg):
                 pass
     count += 1                         # scripture header
     scripture = cfg.get("scripture", {})
-    if scripture.get("verses"):
+    scripture_imported = _import_count(cfg, "scripture_import",
+                                      locate_scripture_file)
+    if scripture_imported is not None:
+        count += scripture_imported
+    elif scripture.get("verses"):
         count += len(_reading_pages(
             " ".join(scripture["verses"]),
             max(44, int(scripture.get("font_size")
                          or cfg.get("scripture_font_size", 44))),
-            whole_verses=True))
+            whole_verses=(scripture.get("layout") != "paragraph")))
     count += 1                         # sermon header（always）
     if cfg.get("sermon_import"):
         path = locate_sermon_file(cfg)
@@ -1551,13 +1664,38 @@ def plan(cfg):
             count += _response_slide_count(cfg)
     else:
         count += _response_slide_count(cfg)
+    communion_imported = _import_count(cfg, "communion_import",
+                                      locate_communion_file)
     if cfg.get("communion"):
-        count += 2                         # communion + apostles creed
+        # imported deck replaces the built-in 聖餐 + 使徒信經 pair
+        count += communion_imported if communion_imported is not None else 2
+    elif communion_imported is not None:
+        # fetched deck alone still counts (matches build()'s guard)
+        count += communion_imported
     count += 1                         # announce header（announcements）
     count += _announcements_slide_count(cfg)
     count += 2                         # doxology + benediction
     count += 1                         # closing
     return count
+
+
+def _import_count(cfg, import_flag, locator):
+    """Slide count of a section deck imported from the cloud, or None when the
+    flag is off, the file is missing, or the pptx cannot be read — in which
+    case the caller counts the section from config.  This mirrors
+    import_override()'s fallback rule so plan() agrees with build()."""
+    if not cfg.get(import_flag):
+        return None
+    path = locator(cfg)
+    if not path:
+        return None
+    try:
+        n = len(Presentation(path).slides._sldIdLst)
+    except Exception:
+        return None
+    # A 0-slide deck is a failed import, not an empty section — import_override()
+    # falls back to the config layout in that case, so plan() must count it too.
+    return n or None
 
 
 def _announcements_slide_count(cfg):
@@ -1588,11 +1726,19 @@ def load_config(path):
 DOWNLOADS = os.path.expanduser("~/Downloads")
 
 
-def _locate_pptx(cfg, file_key, default_name, fallback_prefix):
+def _locate_pptx(cfg, file_key, default_name, fallback_prefix,
+                 glob_fallback=True):
     """Locate an external deck pptx.
 
     Preference: absolute path from config -> exact filename in the project
     folder or ~/Downloads -> newest <fallback_prefix>*.pptx in either location.
+
+    `glob_fallback=False` drops that last step.  It matters for sections whose
+    canonical file is always date-specific (psalm_<date>.pptx and friends, saved
+    under data/decks/<date>/): the standalone scripture flow also drops
+    scripture_<date>.pptx into ~/Downloads, so globbing by prefix alone would
+    happily import last week's deck when the exact path is missing.  Better to
+    fall back to rendering from config than to use the wrong date.
     """
     name = cfg.get(file_key) or default_name
     if isinstance(name, str) and name.strip():
@@ -1604,6 +1750,8 @@ def _locate_pptx(cfg, file_key, default_name, fallback_prefix):
         p = os.path.normpath(os.path.join(d, name))
         if os.path.isfile(p):
             return p
+    if not glob_fallback:
+        return None
     cands = []
     for d in (here, DOWNLOADS):
         if not os.path.isdir(d):
@@ -1655,6 +1803,27 @@ def locate_response_file(cfg):
                         "response")
 
 
+def locate_psalm_file(cfg):
+    date = cfg.get("date", "")
+    return _locate_pptx(cfg, "psalm_file",
+                        "psalm_%s.pptx" % date if date else "psalm.pptx",
+                        "psalm", glob_fallback=False)
+
+
+def locate_scripture_file(cfg):
+    date = cfg.get("date", "")
+    return _locate_pptx(cfg, "scripture_file",
+                        "scripture_%s.pptx" % date if date else "scripture.pptx",
+                        "scripture", glob_fallback=False)
+
+
+def locate_communion_file(cfg):
+    date = cfg.get("date", "")
+    return _locate_pptx(cfg, "communion_file",
+                        "communion_%s.pptx" % date if date else "communion.pptx",
+                        "communion", glob_fallback=False)
+
+
 def import_deck(pres, path, label):
     """Import every slide of `path` into `pres`. Returns the slide count."""
     deck = Presentation(path)
@@ -1664,6 +1833,33 @@ def import_deck(pres, path, label):
     count = len(deck.slides._sldIdLst)
     print("imported %s slides (%d) from %s" % (label, count, path))
     return count
+
+
+def import_override(pres, cfg, import_flag, file_key, locator, label):
+    """Append the section deck named by `import_flag` to `pres`, overriding the
+    section we would otherwise lay out ourselves from config.
+
+    `import_flag` gates the whole thing (off -> the caller renders from config).
+    A missing file, an empty deck, or an unreadable pptx also falls back to the
+    config layout, so a bad download never silently drops a section.  Returns
+    the path that was imported, or None when the caller should render."""
+    if not cfg.get(import_flag):
+        return None
+    path = locator(cfg)
+    if not path:
+        print("warning: %s pptx not found (%s), generating from config"
+              % (label, cfg.get(file_key, "%s_*.pptx" % label)))
+        return None
+    try:
+        if import_deck(pres, path, label) < 1:
+            print("warning: %s pptx has no slides (%s), generating from config"
+                  % (label, path))
+            return None
+    except Exception as exc:
+        print("warning: could not import %s (%s), generating from config"
+              % (label, exc))
+        return None
+    return path
 
 
 def _hymn_slide_count(cfg):

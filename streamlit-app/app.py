@@ -17,7 +17,6 @@ import tempfile
 import uuid
 import html
 import zipfile
-from datetime import date as _date
 
 import streamlit as st
 
@@ -40,8 +39,10 @@ from deck_builder import (build_deck,  # noqa: E402
 from video_deck import (announcements_from_pptx,  # noqa: E402
                         build_announcements_mp4, build_images_mp4,
                         build_pptx_slides_mp4)
-from model import DATE_RE, default_week, normalize_week, split_lines  # noqa: E402
-from store import get_store  # noqa: E402
+from model import (DATE_RE, READING_LAYOUT_DEFAULT,  # noqa: E402
+                    READING_LAYOUT_OPTIONS, default_week, is_first_sunday,
+                    normalize_week, split_lines)
+from store import get_store, invalidate  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)
@@ -791,21 +792,6 @@ def _signal_clear(date, section):
     st.session_state[f"{date}::clear_{section}"] = True
 
 
-def is_first_sunday(date_str):
-    """True when date_str (YYYY.MM.DD or YYYY-MM-DD) is the month's first
-    Sunday — the weeks that add 聖餐 + 使徒信經."""
-    parts = str(date_str).replace("-", ".").split(".")
-    if len(parts) != 3:
-        return False
-    try:
-        y, m, d = (int(p) for p in parts)
-        first = _date(y, m, 1)
-    except ValueError:
-        return False
-    first_sunday = 1 + (6 - first.weekday()) % 7  # Monday=0 .. Sunday=6
-    return d == first_sunday
-
-
 def clear_date_state(date):
     prefix = f"{date}::"
     for key in [k for k in st.session_state.keys() if k.startswith(prefix)]:
@@ -875,6 +861,7 @@ def _seed_values(week, date):
         "psalm_ref": psalm.get("ref", ""),
         "psalm_ref_size": psalm.get("ref_size", 48),
         "psalm_font_size": psalm.get("font_size", 44),
+        "psalm_layout": psalm.get("layout", READING_LAYOUT_DEFAULT),
         "psalm_verses": "\n".join(psalm.get("verses") or []),
         "hymn_font_max": week.get("hymn_font_max", 48),
         "hymn_font_min": week.get("hymn_font_min", 48),
@@ -885,6 +872,7 @@ def _seed_values(week, date):
         "scripture_ref": scripture.get("ref", ""),
         "scripture_ref_size": scripture.get("ref_size", 48),
         "scripture_font_size": scripture.get("font_size", 44),
+        "scripture_layout": scripture.get("layout", READING_LAYOUT_DEFAULT),
         "scripture_verses": "\n".join(scripture.get("verses") or []),
         "sermon_title": sermon.get("title", ""),
         "sermon_title_2": sermon.get("title_2", ""),
@@ -1098,6 +1086,8 @@ def assemble_week(date):
             "ref": gv("psalm_ref", ""),
             "ref_size": int(gv("psalm_ref_size", 48)),
             "font_size": int(gv("psalm_font_size", 44)),
+            "layout": str(gv("psalm_layout", READING_LAYOUT_DEFAULT)
+                          or READING_LAYOUT_DEFAULT),
             "verses": split_lines(gv("psalm_verses", "")),
         },
         "hymn_font_max": int(gv("hymn_font_max", 48)),
@@ -1112,6 +1102,8 @@ def assemble_week(date):
             "ref_size": int(gv("scripture_ref_size", 48)),
             "font_size": int(gv("scripture_font_size", 44)),
             "max_lines": int(gv("scripture_max_lines", 4)),
+            "layout": str(gv("scripture_layout", READING_LAYOUT_DEFAULT)
+                          or READING_LAYOUT_DEFAULT),
             "verses": split_lines(gv("scripture_verses", "")),
         },
         "sermon": {
@@ -1467,10 +1459,16 @@ VERSION_OPTIONS = ["和合本", "和合本2010（和修版）", "新譯本"]
 VERSION_NOTE = {"和合本": "和合本",
                 "和合本2010（和修版）": "和合本2010", "新譯本": "新譯本"}
 
+# 經文 size floors shared by the widgets and the stored-week clamp.
+REF_SIZE_MIN, REF_SIZE_MAX = 20, 90
+BODY_SIZE_MIN, BODY_SIZE_MAX = 44, 90
+
 FONT_OPTIONS = [
     ("DFKai-SB", "DFKai-SB（標楷體）"),
     ("PMingLiU", "PMingLiU（新細明體）"),
-    ("Microsoft JhengHei", "Microsoft JhengHei（微軟正黑體）"),
+    ("JhengHei", "JhengHei（正黑體）"),
+    ("DengXian", "DengXian（等線體）"),
+    ("LiSu", "LiSu（隸書）"),
 ]
 FONT_LABEL = dict(FONT_OPTIONS)
 
@@ -1484,6 +1482,42 @@ def _font_radio(label, key):
         key=key,
         horizontal=True)
     return sv(key.split("::")[-1], "DFKai-SB")
+
+
+def _clamp_widget(key, lo, hi):
+    """Pull a numeric widget's session value back into [lo, hi].
+
+    Streamlit validates an already-set widget value against min_value/max_value
+    and raises when it falls outside, so weeks saved under older (looser) bounds
+    would crash the editor instead of rendering.  Rounding to int keeps
+    number_input from handing back a float."""
+    val = st.session_state.get(key)
+    if val is None:
+        return
+    try:
+        n = int(round(float(val)))
+    except (TypeError, ValueError):
+        return
+    if n < lo or n > hi:
+        st.session_state[key] = max(lo, min(hi, n))
+
+
+def _layout_radio(key):
+    """經文排版方式：整段（段落連續、節碼上標）／列表（一節一行）。"""
+    value = sv(key.split("::")[-1], READING_LAYOUT_DEFAULT)
+    opts = [v for v, _ in READING_LAYOUT_OPTIONS]
+    try:
+        idx = opts.index(value) if value in opts else 0
+    except Exception:
+        idx = 0
+    st.radio(
+        "經文排版方式",
+        options=opts,
+        format_func=lambda v: dict(READING_LAYOUT_OPTIONS).get(v, v),
+        index=idx,
+        key=key,
+        horizontal=True)
+    return sv(key.split("::")[-1], READING_LAYOUT_DEFAULT)
 
 
 def _song_font_selector(label, hint=None):
@@ -1812,8 +1846,9 @@ def _scripture_editor(prefix, section=None):
                  args=(K(f"{prefix}_book"), K(f"{prefix}_ref")))
     st.caption("選書卷會自動填入出處；也可直接在下面「出處」欄鍵入，例如 "
                "詩篇 34:1-3")
-    st.text_input("出處", value=sv(f"{prefix}_ref"),
-                  key=K(f"{prefix}_ref"),
+    ref_text_key = K(f"{prefix}_ref")
+    st.session_state.setdefault(ref_text_key, sv(f"{prefix}_ref"))
+    st.text_input("出處", key=ref_text_key,
                   placeholder="羅馬書 12:1-8")
     st.radio("譯本版本", VERSION_OPTIONS, horizontal=True,
              index=_ref_version_index(sv(f"{prefix}_ref")),
@@ -1826,13 +1861,26 @@ def _scripture_editor(prefix, section=None):
               args=(K(f"{prefix}_ref"), K(f"{prefix}_verses"), section))
     st.caption("支援多卷書：以 `；` 分隔（如 詩篇 34:1-3；馬太福音 6:9-13）")
     c1, c2 = st.columns(2)
-    c1.number_input("出處字型(pt)", value=48, min_value=20,
-                    max_value=90, key=K(f"{prefix}_ref_size"))
-    c2.number_input("內文字型(pt)", value=44, min_value=44,
-                    max_value=90, key=K(f"{prefix}_font_size"))
+    ref_key, font_key = K(f"{prefix}_ref_size"), K(f"{prefix}_font_size")
+    # Weeks saved before these floors were raised can carry a smaller font_size
+    # (e.g. 40).  Streamlit validates a pre-set widget value against
+    # min_value/max_value and raises StreamlitValueBelowMinError, so pull the
+    # stored value back into range before the widget renders.
+    st.session_state.setdefault(ref_key, 48)
+    st.session_state.setdefault(font_key, 44)
+    _clamp_widget(ref_key, REF_SIZE_MIN, REF_SIZE_MAX)
+    _clamp_widget(font_key, BODY_SIZE_MIN, BODY_SIZE_MAX)
+    c1.number_input("出處字型(pt)", min_value=REF_SIZE_MIN,
+                    max_value=REF_SIZE_MAX, key=ref_key)
+    c2.number_input("內文字型(pt)", min_value=BODY_SIZE_MIN,
+                    max_value=BODY_SIZE_MAX, key=font_key)
+    _layout_radio(K(f"{prefix}_layout"))
+    st.caption("「整段」= 節碼以上標內嵌、整段連續排版；"
+               "「列表」= 一節一行，分頁只在節與節之間。")
+    verses_key = K(f"{prefix}_verses")
+    st.session_state.setdefault(verses_key, sv(f"{prefix}_verses"))
     st.text_area("內容（貼上全部經文，自動分頁）",
-                 value=sv(f"{prefix}_verses"),
-                 key=K(f"{prefix}_verses"), height=200)
+                 key=verses_key, height=200)
     _fetch_status(f"{prefix}_verses")
 
 
@@ -1870,6 +1918,8 @@ def _render_scr_flow():
                     "ref": sv("scrflow_ref", ""),
                     "ref_size": int(sv("scrflow_ref_size", 48) or 48),
                     "font_size": int(sv("scrflow_font_size", 44) or 44),
+                    "layout": str(sv("scrflow_layout", READING_LAYOUT_DEFAULT)
+                                  or READING_LAYOUT_DEFAULT),
                     "verses": split_lines(sv("scrflow_verses", "")),
                 },
             })
@@ -1917,6 +1967,12 @@ with st.sidebar:
                 set_active(new_date)
             else:
                 st.error("日期格式應為 2026.09.20")
+
+    if st.button("🔄 重新載入 Google Sheet", use_container_width=True,
+                 key=K("reload_sheet"), help="清除快取，立即重讀 Google Sheet（手動在 Sheet 改過資料時用）"):
+        invalidate()
+        st.cache_data.clear()
+        st.rerun()
 
     dates = sorted(store.all().keys(), reverse=True)
     idx = dates.index(DATE) if DATE in dates else 0
@@ -1969,7 +2025,9 @@ with tab_edit:
     _FONT_OPTIONS = [
         ("DFKai-SB", "DFKai-SB（標楷體）"),
         ("PMingLiU", "PMingLiU（新細明體）"),
-        ("Microsoft JhengHei", "Microsoft JhengHei（微軟正黑體）"),
+        ("JhengHei", "JhengHei（正黑體）"),
+        ("DengXian", "DengXian（等線體）"),
+        ("LiSu", "LiSu（隸書）"),
     ]
     _font_label = dict(_FONT_OPTIONS)
     st.radio(
@@ -1985,6 +2043,8 @@ with tab_edit:
     if step == 1:
         with st.container(border=True):
             section_header("1", "宣召經文", "貼上整段經文，自動分頁")
+            _odrive_panel("psalm", "宣召經文")
+            _gdrive_panel("psalm", "宣召經文")
             _scripture_editor("psalm", "psalm")
 
     elif step == 2:
@@ -2106,6 +2166,8 @@ with tab_edit:
     elif step == 4:
         with st.container(border=True):
             section_header("4", "讀經經文", "貼上整段經文，自動分頁")
+            _odrive_panel("scripture", "讀經經文")
+            _gdrive_panel("scripture", "讀經經文")
             _scripture_editor("scripture", "scripture")
 
     elif step == 5:
@@ -2181,10 +2243,19 @@ with tab_edit:
     elif step == 7:
         with st.container(border=True):
             section_header("7", "聖餐（Communion）")
+            _odrive_panel("communion", "聖餐")
+            _gdrive_panel("communion", "聖餐")
+            st.caption("若從雲端取回 `communion_<日期>.pptx`，會**取代**內建的"
+                       "聖餐＋使徒信經兩頁；此時不必另外勾選聖餐。")
             st.checkbox("聖餐（第一主日：加聖餐＋使徒信經頁）",
                         value=sv("communion", is_first_sunday(DATE)),
                         key=K("communion"))
-            if is_first_sunday(DATE):
+            if is_first_sunday(DATE) and not sv("communion", False):
+                # The date is a first Sunday but this week was saved unchecked;
+                # say so plainly rather than claiming it is pre-checked.
+                st.caption("此日期為當月第一主日，**建議勾選**聖餐＋使徒信經；"
+                           "本週目前為未勾選狀態（沿用已儲存設定）。")
+            elif is_first_sunday(DATE):
                 st.caption("此日期為當月第一主日，已預設勾選聖餐＋使徒信經。")
 
     elif step == 8:

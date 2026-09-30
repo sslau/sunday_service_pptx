@@ -24,6 +24,7 @@ session-only (the uploaded file bytes are not persisted); image_name is kept
 so the editor remembers which announcement is picture-based.
 """
 import copy
+import datetime as _dt
 import json
 import os
 import re
@@ -33,6 +34,21 @@ DATE_RE = re.compile(r"^\d{4}\.\d{2}\.\d{2}$")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_FILE = os.path.join(HERE, "sample_week.json")
 _default = None
+
+
+def is_first_sunday(date):
+    """True when `date` (YYYY.MM.DD or YYYY-MM-DD) is the month's first Sunday —
+    the weeks that add 聖餐 + 使徒信經.  Single source of truth: the UI caption,
+    the checkbox default, and the saved week default all read this."""
+    parts = str(date or "").replace("-", ".").split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        y, m, d = (int(p) for p in parts)
+        first = _dt.date(y, m, 1)
+    except ValueError:
+        return False
+    return d == 1 + (6 - first.weekday()) % 7   # Monday=0 .. Sunday=6
 
 
 def default_week(date):
@@ -46,7 +62,9 @@ def default_week(date):
     week.setdefault("sermon", {})
     week.setdefault("response", {})
     week.setdefault("announcements", [])
-    week.setdefault("communion", False)
+    # 聖餐 + 使徒信經 ride on the month's first Sunday, so the default follows
+    # the date rather than sample_week.json's blanket false.
+    week["communion"] = bool(week.get("communion", False)) or is_first_sunday(date)
     return week
 
 
@@ -58,6 +76,21 @@ def split_lines(text):
         if line.strip():
             out.append(line)
     return out
+
+
+READING_LAYOUTS = ("paragraph", "verse")
+READING_LAYOUT_DEFAULT = "paragraph"
+READING_LAYOUT_OPTIONS = (
+    ("paragraph", "整段"),
+    ("verse", "列表"),
+)
+READING_LAYOUT_LABEL = dict(READING_LAYOUT_OPTIONS)
+
+
+def _reading_layout(value):
+    """Coerce any stored/typed value into a valid reading layout key."""
+    v = str(value or "").strip().lower()
+    return v if v in READING_LAYOUTS else READING_LAYOUT_DEFAULT
 
 
 def _stanza_lines(stanza):
@@ -94,6 +127,7 @@ def normalize_week(w):
     psalm["ref_size"] = _num(psalm.get("ref_size"), 48)
     psalm["font_size"] = _num(psalm.get("font_size"), 44)
     psalm["verses"] = [str(v) for v in (psalm.get("verses") or []) if str(v).strip()]
+    psalm["layout"] = _reading_layout(psalm.get("layout"))
     w["psalm"] = psalm
 
     w["hymn_font_max"] = _num(w.get("hymn_font_max"), 48)
@@ -128,6 +162,7 @@ def normalize_week(w):
     scripture["font_size"] = _num(scripture.get("font_size"), 44)
     scripture["max_lines"] = _num(scripture.get("max_lines"), 4)
     scripture["verses"] = [str(v) for v in (scripture.get("verses") or []) if str(v).strip()]
+    scripture["layout"] = _reading_layout(scripture.get("layout"))
     w["scripture"] = scripture
 
     sermon = dict(w.get("sermon") or {})

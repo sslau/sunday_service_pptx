@@ -32,6 +32,9 @@ SECTION_FILENAMES = {
     "announcements": "announcements_{date}.pptx",
     "offering": "offering_{date}.pptx",
     "response": "response_{date}.pptx",
+    "psalm": "psalm_{date}.pptx",
+    "scripture": "scripture_{date}.pptx",
+    "communion": "communion_{date}.pptx",
 }
 # section -> (import flag, file key) read by generate_deck.build
 SECTION_CFG = {
@@ -40,6 +43,9 @@ SECTION_CFG = {
     "announcements": ("announcements_import", "announcements_file"),
     "offering": ("offering_import", "offering_file"),
     "response": ("response_import", "response_file"),
+    "psalm": ("psalm_import", "psalm_file"),
+    "scripture": ("scripture_import", "scripture_file"),
+    "communion": ("communion_import", "communion_file"),
 }
 
 
