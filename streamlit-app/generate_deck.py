@@ -1464,7 +1464,11 @@ def build(pres, cfg):
         songs_path = locate_songs_file(cfg)
         if songs_path:
             try:
-                if import_deck(pres, songs_path, "songs") < 1:
+                # 詩歌敬拜 標題 comes from worship_header above, so the deck's
+                # own 詩歌敬拜 card — and any stray 回應詩歌 card left stranded
+                # at its end — is dropped instead of duplicated / mis-placed.
+                drop = divider_slide_indices(songs_path)
+                if import_deck(pres, songs_path, "songs", drop) < 1:
                     print("warning: songs pptx has no slides (%s), "
                           "generating hymns from config" % songs_path)
                     songs_path = None
@@ -1520,7 +1524,8 @@ def build(pres, cfg):
         sermons_path = locate_sermon_file(cfg)
         if sermons_path:
             try:
-                if import_deck(pres, sermons_path, "sermon") < 1:
+                if import_deck(pres, sermons_path, "sermon",
+                               divider_slide_indices(sermons_path)) < 1:
                     print("warning: sermon pptx has no slides (%s), "
                           "generating sermon from config" % sermons_path)
                     sermons_path = None
@@ -1541,9 +1546,15 @@ def build(pres, cfg):
         response_path = locate_response_file(cfg)
         if response_path:
             try:
-                if response_has_content:
-                    add_image("response_header")
-                if import_deck(pres, response_path, "response") < 1:
+                # 詩歌回應 標題 always comes from response_hymn.jpg, so it is
+                # emitted whenever a response deck exists — even with no
+                # response content in the sheet — and the deck's own title
+                # cards are dropped.  That keeps the section labelled, and
+                # stops a 詩歌敬拜 card copy-pasted into the deck from
+                # announcing the wrong section right after 講道信息.
+                add_image("response_header")
+                if import_deck(pres, response_path, "response",
+                               divider_slide_indices(response_path)) < 1:
                     print("warning: response pptx has no slides (%s), "
                           "generating from config" % response_path)
                     response_path = None
@@ -1583,7 +1594,8 @@ def build(pres, cfg):
         announcements_path = locate_announcements_file(cfg)
         if announcements_path:
             try:
-                if import_deck(pres, announcements_path, "announcements") < 1:
+                if import_deck(pres, announcements_path, "announcements",
+                                   divider_slide_indices(announcements_path)) < 1:
                     print("warning: announcements pptx has no slides (%s), "
                           "generating from config" % announcements_path)
                     announcements_path = None
@@ -1640,28 +1652,21 @@ def plan(cfg):
     count += 1                         # sermon header（always）
     if cfg.get("sermon_import"):
         path = locate_sermon_file(cfg)
-        if path:
-            try:
-                count += len(Presentation(path).slides._sldIdLst)
-            except Exception:
-                count += _sermon_slide_count(cfg)
-        else:
-            count += _sermon_slide_count(cfg)
+        n = _deck_slide_count(path) if path else None
+        count += n if n else _sermon_slide_count(cfg)
     else:
         count += _sermon_slide_count(cfg)
     response_has_content = bool(cfg.get("response", {}).get("title") or
                                 cfg.get("response", {}).get("verses"))
-    if response_has_content:
+    # build() emits the response header whenever there is content OR a fetched
+    # deck, and drops the deck's own title cards in favour of it.
+    response_path = (locate_response_file(cfg)
+                     if cfg.get("response_import") else None)
+    if response_has_content or response_path:
         count += 1                         # response header
     if cfg.get("response_import"):
-        path = locate_response_file(cfg)
-        if path:
-            try:
-                count += len(Presentation(path).slides._sldIdLst)
-            except Exception:
-                count += _response_slide_count(cfg)
-        else:
-            count += _response_slide_count(cfg)
+        n = _deck_slide_count(response_path) if response_path else None
+        count += n if n else _response_slide_count(cfg)
     else:
         count += _response_slide_count(cfg)
     communion_imported = _import_count(cfg, "communion_import",
@@ -1683,7 +1688,10 @@ def _import_count(cfg, import_flag, locator):
     """Slide count of a section deck imported from the cloud, or None when the
     flag is off, the file is missing, or the pptx cannot be read — in which
     case the caller counts the section from config.  This mirrors
-    import_override()'s fallback rule so plan() agrees with build()."""
+    import_override()'s fallback rule so plan() agrees with build().  Used for
+    the verse/communion decks, which merge verbatim; the song/sermon/response/
+    announcement decks go through _deck_slide_count() instead so their divider
+    cards are discounted."""
     if not cfg.get(import_flag):
         return None
     path = locator(cfg)
@@ -1704,10 +1712,9 @@ def _announcements_slide_count(cfg):
     if cfg.get("announcements_import"):
         path = locate_announcements_file(cfg)
         if path:
-            try:
-                return len(Presentation(path).slides._sldIdLst)
-            except Exception:
-                pass
+            n = _deck_slide_count(path)
+            if n:
+                return n
     return len(cfg.get("announcements", []))
 
 
@@ -1824,13 +1831,74 @@ def locate_communion_file(cfg):
                         "communion", glob_fallback=False)
 
 
-def import_deck(pres, path, label):
-    """Import every slide of `path` into `pres`. Returns the slide count."""
+# Section title cards the generator already emits itself (worship.jpg,
+# response_hymn.jpg, sermon.jpg, ...).  A copy found at either end of an
+# uploaded deck is either a duplicate or announces the wrong section, so
+# import_deck() drops it in favour of the generated one.
+_DIVIDER_TITLES = ("詩歌敬拜", "詩歌回應", "回應詩歌", "講道信息", "講道")
+
+
+def _is_divider_slide(slide):
+    """True when `slide` is nothing but a section title card.
+
+    The whole slide's text (page numbers aside) must equal one of
+    _DIVIDER_TITLES, so hymn title cards ("真光普照 / 美樂頌125") and verse
+    slides never match."""
+    text = []
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        for para in shape.text_frame.paragraphs:
+            line = "".join(r.text for r in para.runs).strip()
+            if line and not re.match(r"^\d{1,3}/\d{1,3}$", line):
+                text.append(line)
+    joined = "".join(text).replace(" ", "").replace("　", "")
+    return joined in _DIVIDER_TITLES
+
+
+def divider_slide_indices(path):
+    """Indices of the section title cards at the very start/end of the deck at
+    `path`.  Only the outer two slides at each end are considered, so a title
+    card sitting between hymns is never dropped.  Returns a set of indices;
+    empty when the file is missing or unreadable."""
+    try:
+        slides = list(Presentation(path).slides)
+    except Exception:
+        return set()
+    n = len(slides)
+    drop = set()
+    for i in list(range(min(2, n))) + list(range(max(0, n - 2), n)):
+        if _is_divider_slide(slides[i]):
+            drop.add(i)
+    return drop
+
+
+def _deck_slide_count(path):
+    """Slides the deck at `path` contributes once its section title cards are
+    dropped.  None when the file is missing/unreadable, or when nothing but
+    dividers remains — build() treats both as a failed import and falls back to
+    the config layout, so plan() must fall back too."""
+    try:
+        n = len(Presentation(path).slides._sldIdLst)
+    except Exception:
+        return None
+    n -= len(divider_slide_indices(path))
+    return n if n > 0 else None
+
+
+def import_deck(pres, path, label, drop=None):
+    """Import every slide of `path` into `pres`, skipping the indices in `drop`
+    (see divider_slide_indices). Returns the number of slides imported."""
     deck = Presentation(path)
+    drop = drop or set()
     cloner = _PackageCloner(pres)
-    for source_slide in deck.slides:
+    for idx, source_slide in enumerate(deck.slides):
+        if idx in drop:
+            print("dropped divider slide %d (%s) from %s"
+                  % (idx + 1, label, path))
+            continue
         import_slide(pres, source_slide, cloner)
-    count = len(deck.slides._sldIdLst)
+    count = sum(1 for _ in deck.slides) - len(drop)
     print("imported %s slides (%d) from %s" % (label, count, path))
     return count
 
@@ -1869,10 +1937,9 @@ def _hymn_slide_count(cfg):
     if cfg.get("songs_import"):
         songs_path = locate_songs_file(cfg)
         if songs_path:
-            try:
-                return len(Presentation(songs_path).slides._sldIdLst)
-            except Exception:
-                pass
+            n = _deck_slide_count(songs_path)
+            if n:
+                return n
     n = 0
     for hymn in cfg.get("hymns", []):
         n += 1
