@@ -1497,7 +1497,9 @@ def _lyric_search_panel(uid_kind, uid):
         if not len(lib):
             st.info(f"歌詞庫是空的（預期在 `lyrics/*/{lyric_search.CACHE_DIRNAME}/`）。")
             return
-        st.caption(f"{len(lib)} 首詩歌／{lib.total_slides} 頁。"
+        books = sorted({w for _n, w in lib.meta.values()})
+        st.caption(f"{len(lib)} 首詩歌／{lib.total_slides} 頁，來自 "
+                   f"{'、'.join(books)}。"
                    "空格分開多個詞＝同一頁要全部命中；忽略標點與空格，"
                    "所以跨行、跨頁的句子也找得到。")
         q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
@@ -1514,7 +1516,9 @@ def _lyric_search_panel(uid_kind, uid):
                else f"超過 {lyric_search.MAX_HITS} 個結果，只顯示前面 "
                     f"{lyric_search.MAX_HITS} 個——請加詞收窄。")
         st.caption(cap)
-        labels = [f"{h.song} · 第 {h.no} 頁 — "
+        # The same hymn appears in several books, so name the book in each row —
+        # otherwise two identical-looking entries are impossible to tell apart.
+        labels = [f"{h.name} · {h.where} · 第 {h.no} 頁 — "
                   f"{lyric_search.snippet(h.text, q)}" for h in hits]
         pick = st.selectbox("結果", options=list(range(len(hits))),
                             format_func=lambda i: labels[i],
@@ -1529,14 +1533,14 @@ def _lyric_search_panel(uid_kind, uid):
             "第 1 頁當標題頁", value=True, key=K(f"{base}lyskip"),
             help="多數歌第 1 頁只有曲名／英文名。但有些歌第 1 頁就是歌詞，"
                  "這種情況請取消勾選。")
-        n_seg = len(lib.segments(hit.song, drop_repeats, skip_first))
+        n_seg = len(lib.segments(hit.key, drop_repeats, skip_first))
         b1, b2 = st.columns([1.7, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
                      help="把全部頁的歌詞貼進「貼上整首詩歌」，"
                           "不會直接改動下面的各段。"):
-            text, n = lib.paste_text(hit.song, drop_repeats, skip_first)
+            text, n = lib.paste_text(hit.key, drop_repeats, skip_first)
             if not n:
                 st.warning("這個選項會匯入 0 段——取消「第 1 頁當標題頁」試試。")
             else:
@@ -1545,7 +1549,7 @@ def _lyric_search_panel(uid_kind, uid):
                      use_container_width=True,
                      help="跳過貼上框，直接在下面加一段。"):
             _insert_stanza(uid_kind, uid, hit.text)
-        st.caption(f"曲名可填：{hit.song}")
+        st.caption(f"曲名可填：{hit.name}　（{hit.where}）")
 
 
 def _hymn_preview_html(preview):
