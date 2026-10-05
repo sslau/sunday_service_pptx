@@ -24,7 +24,6 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
                    layout="wide")
 
 import bible  # noqa: E402
-import gdrive  # noqa: E402
 import login_log  # noqa: E402
 import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
@@ -310,85 +309,6 @@ def section_deck_panel(sec_key, build_sec, save_sec, label, dl_name,
             use_container_width=True)
 
 
-def _sa_from_secrets(secrets):
-    sa = secrets.get("gcp_service_account") or {}
-    if sa.get("client_email") and sa.get("private_key"):
-        return dict(sa)
-    return None
-
-
-def _drive_fetch_section(section, date, folder_id):
-    """Find the canonical `section` deck file for `date` inside a Drive folder
-    and download it to the saved-deck path (same location uploads use), so the
-    existing 來源狀態/merge flow picks it up automatically.  Returns the file
-    name, or None when nothing matches (no download performed)."""
-    sa = _sa_from_secrets(st_secrets or {})
-    if not sa:
-        raise RuntimeError(
-            "未設定 Google 服務帳戶（secrets.toml 的 gcp_service_account）")
-    want = os.path.basename(section_path(section, date))
-    if not want:
-        raise RuntimeError("不支援此節（無對應檔名）")
-    files = gdrive.files_in_date_folder(sa, folder_id, date)
-    picked = next((f for f in files if (f.get("name") or "") == want), None)
-    if picked is None:
-        variants = gdrive._date_variants(date)
-        picked = next(
-            (f for f in files
-             if (f.get("name") or "").endswith(".pptx")
-             and any(v in (f.get("name") or "") for v in variants)), None)
-    if picked is None:
-        return None
-    path = section_path(section, date)
-    ok, err = gdrive.download_to(sa, picked["id"], path)
-    if not ok:
-        raise RuntimeError(err)
-    fname = picked.get("name") or ""
-    st.session_state[f"{date}::build_{'ann' if section == 'announcements' else section}_name"] = \
-        fname
-    save_upload_name(section, date, fname)
-    st.cache_data.clear()
-    return fname
-
-
-def _drive_fetch_video(folder_id):
-    """Download the date's 家事MP4 (announcements_<date>.mp4) from the Drive
-    date-subfolder into the persisted video store.
-    Returns the file name, or None when nothing matches."""
-    sa = _sa_from_secrets(st_secrets or {})
-    if not sa:
-        raise RuntimeError(
-            "未設定 Google 服務帳戶（secrets.toml 的 gcp_service_account）")
-    want = f"announcements_{DATE}.mp4"
-    files = gdrive.files_in_date_folder(sa, folder_id, DATE)
-    picked = next((f for f in files if (f.get("name") or "") == want), None)
-    if picked is None:
-        variants = gdrive._date_variants(DATE)
-        picked = next(
-            (f for f in files
-             if (f.get("name") or "").endswith(".mp4")
-             and any(v in (f.get("name") or "") for v in variants)), None)
-    if picked is None:
-        return None
-    tmp = tempfile.NamedTemporaryFile(
-        suffix=".mp4", prefix="gdrive_", delete=False).name
-    try:
-        ok, err = gdrive.download_to(sa, picked["id"], tmp)
-        if not ok:
-            raise RuntimeError(err)
-        with open(tmp, "rb") as fh:
-            data = fh.read()
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    save_video_mp4(DATE, data)
-    st.session_state[K("video_data")] = data
-    st.cache_data.clear()
-    return picked.get("name")
-
-
 def _od_config():
     """[onedrive] block from secrets, or None when not configured."""
     try:
@@ -473,57 +393,6 @@ def _od_fetch_video(cfg, picked_file=None):
     st.session_state[K("video_data")] = data
     st.cache_data.clear()
     return picked.get("name")
-
-
-def _gdrive_panel(section, label, is_video=False):
-    """Expander that pulls the section's .pptx (or the 家事MP4 when is_video)
-    straight from the Livestreaming Drive folder (per-date subfolder).
-    Reusable across wizard steps."""
-    with st.expander("☁️ 從 Google Drive 讀取%s投影片" % label):
-        try:
-            cfg_folder = (st.secrets.get("gdrive", {})
-                          .get("folder", ""))
-        except Exception:
-            cfg_folder = ""
-        if cfg_folder:
-            folder_val = cfg_folder
-            _p = (DATE or "").split(".")
-            _mmdd = ("%s.%s%s" % (_p[0], _p[1], _p[2])
-                     if len(_p) == 3 else DATE)
-            want = (f"announcements_{DATE}.mp4" if is_video
-                    else os.path.basename(section_path(section, DATE)))
-            st.caption("📽 %s投影片會直接從雲端 **「Livestreaming」資料夾**"
-                       "（依日期子資料夾，如 `%s`）讀取，不需手動上載。"
-                       "預期檔案名稱：**`%s`**（或檔名含該日期）。"
-                       % (label, _mmdd, want))
-        else:
-            folder_val = st.text_input(
-                "Drive 資料夾連結（secrets.toml 尚未設定）",
-                key=K("gdrive_folder"),
-                placeholder="https://drive.google.com/drive/folders/…")
-        if st.button("⚡ 讀取並儲存", type="primary",
-                     key=K(f"gdrive_fetch_{section}")):
-            fid = gdrive.folder_id_from(folder_val)
-            if not fid:
-                st.error("請貼上 Google Drive 資料夾連結"
-                         "（須含 /folders/<ID>）")
-            else:
-                try:
-                    if is_video:
-                        name = _drive_fetch_video(fid)
-                    else:
-                        name = _drive_fetch_section(section, DATE, fid)
-                except Exception as exc:
-                    st.error(f"Google Drive 讀取失敗：{exc}")
-                else:
-                    if name:
-                        st.success(f"已從 Drive 讀取：{name}")
-                    else:
-                        want = (f"announcements_{DATE}.mp4" if is_video
-                                else os.path.basename(
-                                    section_path(section, DATE)))
-                        st.warning("資料夾中找不到符合 "
-                                   f"{want}（或日期含 {DATE}）的檔案")
 
 
 def _odrive_panel(section, label, is_video=False):
@@ -2327,7 +2196,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("1", "宣召經文", "貼上整段經文，自動分頁")
             _odrive_panel("psalm", "宣召經文")
-            _gdrive_panel("psalm", "宣召經文")
             if not _cloud_deck_status("psalm", "宣召經文"):
                 st.caption("尚未讀取 `psalm_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
@@ -2337,7 +2205,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("2", "詩歌敬拜（Hymns）")
             _odrive_panel("songs", "詩歌")
-            _gdrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
                                btn="🎵 產生詩歌投影片")
@@ -2436,7 +2303,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("3", "獻詩（Offering）")
             _odrive_panel("offering", "獻詩")
-            _gdrive_panel("offering", "獻詩")
             section_deck_panel("offering", None, "offering", "獻詩", None)
             if not _cloud_deck_status("offering", "獻詩", "build_offering"):
                 st.info("此節只接受現成 .pptx：上載後製成整場時以檔案為準；"
@@ -2447,7 +2313,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("4", "讀經經文", "貼上整段經文，自動分頁")
             _odrive_panel("scripture", "讀經經文")
-            _gdrive_panel("scripture", "讀經經文")
             if not _cloud_deck_status("scripture", "讀經經文"):
                 st.caption("尚未讀取 `scripture_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
@@ -2457,7 +2322,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("5", "講道信息（Sermon）")
             _odrive_panel("sermon", "講道")
-            _gdrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
                                btn="🗣 產生講道投影片")
@@ -2470,7 +2334,6 @@ with tab_edit:
             section_header("6", "詩歌回應（Response Hymn）",
                            "單首回應詩歌，緊接信息之後（可選）")
             _odrive_panel("response", "詩歌回應")
-            _gdrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
                                btn="🎶 產生詩歌回應投影片")
@@ -2513,7 +2376,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("7", "聖餐（Communion）")
             _odrive_panel("communion", "聖餐")
-            _gdrive_panel("communion", "聖餐")
             if not _cloud_deck_status("communion", "聖餐"):
                 st.caption("若從雲端取回 `communion_<日期>.pptx`，會**取代**內建的"
                            "聖餐＋使徒信經兩頁；此時不必另外勾選聖餐。")
@@ -2532,7 +2394,6 @@ with tab_edit:
         with st.container(border=True):
             section_header("8", "家事分享（Announcements）")
             _odrive_panel("announcements", "家事分享")
-            _gdrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
                                f"announcements_{DATE}.pptx",
@@ -2545,7 +2406,6 @@ with tab_edit:
     elif step == 9:
         with st.container(border=True):
             _odrive_panel("video", "家事MP4", is_video=True)
-            _gdrive_panel("video", "家事MP4", is_video=True)
             render_video_panel("s9", "9")
         st.caption("產生 MP4 後，按左側「📽 製成整場投影片」即會自動併入"
                    "整場投影片的第一頁（勾選「併入第一頁」時，自動循環播放）。")
