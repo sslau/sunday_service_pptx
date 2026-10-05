@@ -1348,6 +1348,13 @@ def _ly_fill_paste(uid_kind, uid, text, n_seg):
                "可直接在上方整首編輯，再按「匯入為各段」切成各段。")
 
 
+# Whole-song import policy.  Fixed, not a per-import choice: slide 1 of these
+# decks is normally a title card, and song decks repeat the chorus on purpose,
+# so importing them verbatim produces a junk first 段 and duplicated ones.
+DROP_REPEATS = True
+SKIP_TITLE_SLIDE = True
+
+
 def _lyric_search_panel(uid_kind, uid):
     """🔍 歌詞庫搜尋 — look a song up in lyrics/*/.lyrics_txt and get its lyrics.
 
@@ -1394,24 +1401,21 @@ def _lyric_search_panel(uid_kind, uid):
                             key=K(f"{base}lysel"))
         hit = hits[pick]
         st.markdown("```\n%s\n```" % hit.text)
-        opt1, opt2 = st.columns(2)
-        drop_repeats = opt1.checkbox(
-            "略去重複頁", value=True, key=K(f"{base}lydup"),
-            help="詩歌 deck 常把副歌重複放映；勾選後只匯入每段歌詞一次。")
-        skip_first = opt2.checkbox(
-            "第 1 頁當標題頁", value=True, key=K(f"{base}lyskip"),
-            help="多數歌第 1 頁只有曲名／英文名。但有些歌第 1 頁就是歌詞，"
-                 "這種情況請取消勾選。")
-        n_seg = len(lib.segments(hit.key, drop_repeats, skip_first))
+        # Fixed rather than optional: the first page is treated as a title card
+        # and repeated pages (a chorus deliberately re-slid in the source deck)
+        # are collapsed.  Both were the defaults, and each one is the right call
+        # for the overwhelming majority of the library.
+        n_seg = len(lib.segments(hit.key, DROP_REPEATS, SKIP_TITLE_SLIDE))
         b1, b2 = st.columns([1.7, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
                      help="把全部頁的歌詞貼進「貼上整首詩歌」，"
                           "不會直接改動下面的各段。"):
-            text, n = lib.paste_text(hit.key, drop_repeats, skip_first)
+            text, n = lib.paste_text(hit.key, DROP_REPEATS, SKIP_TITLE_SLIDE)
             if not n:
-                st.warning("這個選項會匯入 0 段——取消「第 1 頁當標題頁」試試。")
+                st.warning("這個選項會匯入 0 段——這首歌只有第 1 頁有歌詞，"
+                           "而第 1 頁已當作標題頁略去。")
             else:
                 _ly_fill_paste(uid_kind, uid, text, n)
         if b2.button("⬇️ 只匯入這一頁", key=K(f"{base}lyone"),
@@ -2225,6 +2229,18 @@ with tab_edit:
                 with st.expander(f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}",
                                  expanded=(i == 0)):
                     _lyric_search_panel("hymn", uid)
+                    st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
+                                 value=sv(f"hymn_{uid}_paste", ""),
+                                 key=K(f"hymn_{uid}_paste"), height=300)
+                    st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
+                               "或直接貼上，改完再按「匯入為各段」"
+                               "切成各段（每段＝一張 slide）。")
+                    if st.button("匯入為各段",
+                                 key=K(f"hymn_{uid}_apply_paste")):
+                        _apply_parsed("hymn", uid,
+                                      st.session_state.get(
+                                          K(f"hymn_{uid}_paste"), ""),
+                                      with_chorus=False)
                     c1, c2 = st.columns(2)
                     c1.text_input("曲名",
                                   value=sv(f"hymn_{uid}_title", h.get("title")),
@@ -2245,18 +2261,6 @@ with tab_edit:
                                            h.get("lyricist")),
                                   key=K(f"hymn_{uid}_lyricist"))
                     _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
-                    st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
-                                 value=sv(f"hymn_{uid}_paste", ""),
-                                 key=K(f"hymn_{uid}_paste"), height=300)
-                    st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                               "或直接貼上，改完再按「匯入為各段」"
-                               "切成各段（每段＝一張 slide）。")
-                    if st.button("匯入為各段",
-                                 key=K(f"hymn_{uid}_apply_paste")):
-                        _apply_parsed("hymn", uid,
-                                      st.session_state.get(
-                                          K(f"hymn_{uid}_paste"), ""),
-                                      with_chorus=False)
                     _ly_stanza_editors("hymn", uid)
                     st.divider()
                     pcol1, pcol2 = st.columns([0.42, 0.58])
@@ -2348,6 +2352,15 @@ with tab_edit:
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
                 st.session_state.setdefault(K(name), "")
+            st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
+                         value=sv("resp_paste", ""), key=K("resp_paste"),
+                         height=300)
+            st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
+                       "或直接貼上，改完再按「匯入為各段」"
+                       "切成各段（每段＝一張 slide）。")
+            if st.button("匯入為各段", key=K("resp_apply_paste")):
+                _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
+                              with_chorus=False)
             c1, c2 = st.columns(2)
             c1.text_input("曲名", value=sv("resp_title"), key=K("resp_title"))
             c2.text_input("英文名", value=sv("resp_subtitle"),
@@ -2358,15 +2371,6 @@ with tab_edit:
             m3.text_input("詞", value=sv("resp_lyricist"),
                           key=K("resp_lyricist"))
             _bg_picker("resp_bg", "")
-            st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
-                         value=sv("resp_paste", ""), key=K("resp_paste"),
-                         height=300)
-            st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                       "或直接貼上，改完再按「匯入為各段」"
-                       "切成各段（每段＝一張 slide）。")
-            if st.button("匯入為各段", key=K("resp_apply_paste")):
-                _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
-                              with_chorus=False)
             _ly_stanza_editors("resp", "")
             if st.button("＋ 新增一段", key=K("resp_add")):
                 _ly_add_stanza("resp", "")
