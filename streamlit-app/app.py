@@ -92,6 +92,16 @@ def sv(name, default=""):
     return st.session_state.get(K(name), default)
 
 
+def _song_title(uid, h):
+    """A hymn's name for display: what the user has typed, else the stored one.
+
+    The 曲名 box is a widget, so the sheet's copy goes stale the moment someone
+    types — anything naming the song (expander header, delete prompt) has to read
+    the live value or it keeps saying （未命名）.
+    """
+    return sv(f"hymn_{uid}_title", h.get("title", ""))
+
+
 def _request_meta():
     """Best-effort remote IP + user agent for the login log."""
     try:
@@ -1088,7 +1098,7 @@ def _confirm_del_hymn():
         st.session_state.pop(K("del_hymn_pending"), None)
         return
     h = ui[idx]
-    st.markdown(f"確定要移除 **{h.get('title') or '（未命名）'}** 嗎？"
+    st.markdown(f"確定要移除 **{_song_title(h['_id'], h) or '（未命名）'}** 嗎？"
                 "此操作不會被還原。")
     d1, d2 = st.columns(2)
     if d1.button("確認移除", type="primary", use_container_width=True):
@@ -2341,7 +2351,7 @@ with tab_edit:
 
             for i, h in enumerate(_get_ui("hymns")):
                 uid = h["_id"]
-                with st.expander(f"詩歌 {i + 1} · {h.get('title') or '（未命名）'}",
+                with st.expander(f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}",
                                  expanded=(i == 0)):
                     _lyric_search_panel("hymn", uid)
                     c1, c2 = st.columns(2)
