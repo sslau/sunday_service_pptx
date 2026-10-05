@@ -1314,22 +1314,151 @@ def _ly_base(uid_kind, uid):
     return f"hymn_{uid}_" if uid_kind == "hymn" else "resp_"
 
 
-def _insert_stanza(uid_kind, uid, text):
-    """Append one 段 to a song without touching the rest, then refresh the view."""
-    base = _ly_base(uid_kind, uid)
+def _ly_stanzas(uid_kind, uid):
+    """The live 段 list behind a song editor.
+
+    A hymn stores its stanzas in the dict `_get_ui("hymns")` hands back, while
+    詩歌回應 keeps a bare list in session state, so both are reached through here.
+    Returned by reference: callers mutate it in place.
+    """
     if uid_kind == "hymn":
         h = next((x for x in _get_ui("hymns")
                   if x.get("_id") == uid), None)
-        if h is None:
-            return
-        h["stanzas"].append(text)
-        j = len(h["stanzas"]) - 1
-    else:
-        ui = st.session_state.setdefault(f"{DATE}::ui_resp", [""])
-        ui.append(text)
-        j = len(ui) - 1
-    st.session_state[K(f"{base}verses_{j}")] = text
+        return None if h is None else h.setdefault("stanzas", [""])
+    return st.session_state.setdefault(f"{DATE}::ui_resp", [""])
+
+
+def _ly_values(uid_kind, uid):
+    """段 text as edited right now — the live widget values win over the stored
+    list, so a move or delete cannot silently drop an unsaved edit."""
+    base = _ly_base(uid_kind, uid)
+    src = _ly_stanzas(uid_kind, uid)
+    if src is None:
+        return []
+    return [st.session_state.get(K(f"{base}verses_{j}"),
+                                 src[j] if j < len(src) else "")
+            for j in range(max(len(src), 1))]
+
+
+def _ly_commit(uid_kind, uid, values):
+    """Write 段 text to both the session widgets and the stored list.
+
+    Both are needed: the widgets are what the user sees after the rerun, and the
+    stored list is what `assemble_hymn` and the lyric importer read back.
+    """
+    base = _ly_base(uid_kind, uid)
+    src = _ly_stanzas(uid_kind, uid)
+    if src is None:
+        return
+    old = len(src)
+    src[:] = values
+    for j, v in enumerate(values):
+        st.session_state[K(f"{base}verses_{j}")] = v
+    for j in range(len(values), old):
+        st.session_state.pop(K(f"{base}verses_{j}"), None)
+
+
+def _ly_queue(uid_kind, uid, action, *args):
+    """Record a 段 change and rerun, so `_ly_stanza_editors` applies it.
+
+    Streamlit refuses to write a widget key once that widget has been
+    instantiated in the current run (`StreamlitAPIException`), and the ▲▼🗑
+    controls and ＋新增一段 all live *after* — or inside — the stanza loop, so
+    `verses_0…verses_j` are already real widgets by the time they are clicked.
+    The top of the next run, before the loop re-creates them, is the only point
+    where permuting those keys is legal.  `pending` is not a widget key, so
+    setting and popping it mid-loop is always fine.
+
+    Callers must not rerun before the stanza loop has rendered — see
+    `_ly_stanza_editors`, which collects its click and queues it afterwards.
+    """
+    st.session_state[K(_ly_base(uid_kind, uid) + "pending")] = (action, args)
     st.rerun()
+
+
+def _ly_add_stanza(uid_kind, uid):
+    """Append an empty 段."""
+    _ly_queue(uid_kind, uid, "add")
+
+
+def _ly_drain(uid_kind, uid):
+    """Apply whatever `_ly_queue` recorded, before any stanza widget exists."""
+    action, args = st.session_state.pop(
+        K(_ly_base(uid_kind, uid) + "pending"), (None, ()))
+    if action is None:
+        return
+    vals = _ly_values(uid_kind, uid)
+    if action == "move":
+        i, delta = args
+        j = i + delta
+        if 0 <= i < len(vals) and 0 <= j < len(vals):
+            vals[i], vals[j] = vals[j], vals[i]
+    elif action == "drop":
+        i = args[0]
+        if 0 <= i < len(vals):
+            vals.pop(i)
+            vals = vals or [""]
+    elif action == "add":
+        vals.append("")
+    elif action == "insert":
+        vals.append(args[0])
+    elif action == "replace":
+        # 匯入整首: the lyric library's slides, in the paste box's own
+        # "one blank line per 段" format.
+        stanzas, refrain, repeat = _parse_hymn_paste(args[0], with_chorus=False)
+        vals = stanzas
+    else:
+        return
+    _ly_commit(uid_kind, uid, vals)
+
+
+def _ly_stanza_editors(uid_kind, uid):
+    """The 段 list for one song: a text box per 段, each with ▲▼ to reorder and
+    🗑 to delete.
+
+    Streamlit has no drag-and-drop list widget (checked 1.56.0 — the `drag` hits
+    in the package are Plotly's dragmode), and the real thing needs a Node-built
+    third-party component, so ▲▼ gives the same result in one click.
+
+    段 are addressed by position (`verses_0`, `verses_1`, …), so a move has to
+    permute the values across those keys rather than renumber anything — hence
+    `_ly_queue` / `_ly_drain`.
+    """
+    base = _ly_base(uid_kind, uid)
+    _ly_drain(uid_kind, uid)
+    src = _ly_stanzas(uid_kind, uid)
+    if src is None:
+        return
+    n = max(len(src), 1)
+    clicked = None
+    for j in range(n):
+        st.session_state.setdefault(
+            K(f"{base}verses_{j}"), src[j] if j < len(src) else "")
+        up, dn, rm, gap = st.columns([1, 1, 1, 11])
+        if up.button("▲", key=K(f"{base}up_{j}"), help="這一段上移",
+                     use_container_width=True, disabled=(j == 0)):
+            clicked = ("move", j, -1)
+        if dn.button("▼", key=K(f"{base}dn_{j}"), help="這一段下移",
+                     use_container_width=True, disabled=(j == n - 1)):
+            clicked = ("move", j, +1)
+        if rm.button("🗑", key=K(f"{base}rm_{j}"), help="刪除這一段",
+                     use_container_width=True):
+            clicked = ("drop", j)
+        gap.caption(f"共 {n} 段 · ▲▼ 調整次序，🗑 刪除")
+        st.text_area(f"第 {j + 1} 段（每行一句）",
+                     value=sv(f"{base}verses_{j}",
+                              src[j] if j < len(src) else ""),
+                     key=K(f"{base}verses_{j}"), height=90)
+    # Act only after every text box has been rendered.  Calling `_ly_queue`
+    # inside the loop would rerun mid-script, and Streamlit discards the state
+    # of widgets a run never reached — the remaining 段 would come back empty.
+    if clicked:
+        _ly_queue(uid_kind, uid, *clicked)
+
+
+def _insert_stanza(uid_kind, uid, text):
+    """Append one 段 to a song without touching the rest."""
+    _ly_queue(uid_kind, uid, "insert", text)
 
 
 def _lyric_search_panel(uid_kind, uid):
@@ -1389,7 +1518,7 @@ def _lyric_search_panel(uid_kind, uid):
             if not n:
                 st.warning("這個選項會匯入 0 段——取消「第 1 頁當標題頁」試試。")
             else:
-                _apply_parsed(uid_kind, uid, text, with_chorus=False)
+                _ly_queue(uid_kind, uid, "replace", text)
         if b2.button("⬇️ 只匯入這一頁", key=K(f"{base}lyone"),
                      use_container_width=True):
             _insert_stanza(uid_kind, uid, hit.text)
@@ -2233,12 +2362,7 @@ with tab_edit:
                                           K(f"hymn_{uid}_paste"), ""),
                                       with_chorus=False)
                     _lyric_search_panel("hymn", uid)
-                    for j in range(max(len(h.get("stanzas", ["", ""])), 1)):
-                        st.text_area(f"第 {j + 1} 段（每行一句）",
-                                     value=sv(f"hymn_{uid}_verses_{j}",
-                                              h["stanzas"][j]
-                                              if j < len(h["stanzas"]) else ""),
-                                     key=K(f"hymn_{uid}_verses_{j}"), height=90)
+                    _ly_stanza_editors("hymn", uid)
                     st.divider()
                     pcol1, pcol2 = st.columns([0.42, 0.58])
                     if pcol1.button("🎬 產生這首詩歌的 slide",
@@ -2265,7 +2389,7 @@ with tab_edit:
                     _render_hymn_preview(uid, h.get("title", ""))
                     c1, c2 = st.columns(2)
                     if c1.button("＋ 新增一段", key=K(f"hymn_{uid}_addstanza")):
-                        h["stanzas"].append("")
+                        _ly_add_stanza("hymn", uid)
                     if c2.button("移除這首詩歌", key=K(f"hymn_{uid}_del")):
                         st.session_state[K("del_hymn_pending")] = i
                         st.rerun()
@@ -2329,7 +2453,6 @@ with tab_edit:
             _song_font_selector(
                 "歌詞字級（pt）",
                 hint="與「詩歌敬拜」共用同一設定（48–54pt）。")
-            ui_resp = st.session_state.setdefault(f"{DATE}::ui_resp", [""])
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
                 st.session_state.setdefault(K(name), "")
@@ -2351,21 +2474,9 @@ with tab_edit:
                 _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
                               with_chorus=False)
             _lyric_search_panel("resp", "")
-            for j in range(max(len(ui_resp), 1)):
-                st.session_state.setdefault(
-                    K(f"resp_verses_{j}"),
-                    ui_resp[j] if j < len(ui_resp) else "")
-                st.text_area(f"第 {j + 1} 段（每行一句）",
-                             value=sv(f"resp_verses_{j}",
-                                      ui_resp[j] if j < len(ui_resp) else ""),
-                             key=K(f"resp_verses_{j}"), height=90)
-            c1, c2 = st.columns(2)
-            if c1.button("＋ 新增一段", key=K("resp_add")):
-                ui_resp.append("")
-                st.rerun()
-            if c2.button("移除最後一段", key=K("resp_del")) and len(ui_resp) > 1:
-                ui_resp.pop()
-                st.rerun()
+            _ly_stanza_editors("resp", "")
+            if st.button("＋ 新增一段", key=K("resp_add")):
+                _ly_add_stanza("resp", "")
             _finalize_stamp("resp_finalized", "詩歌回應")
 
     elif step == 7:
