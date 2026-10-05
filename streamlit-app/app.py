@@ -26,6 +26,7 @@ st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
 import bible  # noqa: E402
 import gdrive  # noqa: E402
 import login_log  # noqa: E402
+import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
@@ -1308,6 +1309,93 @@ def _maybe_reapply_chorus(uid_kind, uid):
         _apply_parsed(uid_kind, uid, paste, with_chorus=cur)
 
 
+def _ly_base(uid_kind, uid):
+    """Widget-key prefix for a song editor: per-song uid, or the shared 詩歌回應."""
+    return f"hymn_{uid}_" if uid_kind == "hymn" else "resp_"
+
+
+def _insert_stanza(uid_kind, uid, text):
+    """Append one 段 to a song without touching the rest, then refresh the view."""
+    base = _ly_base(uid_kind, uid)
+    if uid_kind == "hymn":
+        h = next((x for x in _get_ui("hymns")
+                  if x.get("_id") == uid), None)
+        if h is None:
+            return
+        h["stanzas"].append(text)
+        j = len(h["stanzas"]) - 1
+    else:
+        ui = st.session_state.setdefault(f"{DATE}::ui_resp", [""])
+        ui.append(text)
+        j = len(ui) - 1
+    st.session_state[K(f"{base}verses_{j}")] = text
+    st.rerun()
+
+
+def _lyric_search_panel(uid_kind, uid):
+    """🔍 歌詞庫搜尋 — look a song up in lyrics/*/.lyrics_txt and pull its lyrics
+    straight into this song's 段 fields.
+
+    Each result is one slide of a song deck, so 「匯入整首」 hands the whole song
+    over in the same "one blank line per 段" protocol the paste box uses.
+    """
+    base = _ly_base(uid_kind, uid)
+    try:
+        lib = lyric_search.get_library()
+    except Exception as exc:                       # unreadable library
+        st.warning(f"歌詞庫無法載入：{exc}")
+        return
+    with st.expander("🔍 歌詞庫搜尋"):
+        if not len(lib):
+            st.info(f"歌詞庫是空的（預期在 `lyrics/*/{lyric_search.CACHE_DIRNAME}/`）。")
+            return
+        st.caption(f"{len(lib)} 首詩歌／{lib.total_slides} 頁。"
+                   "空格分開多個詞＝同一頁要全部命中；忽略標點與空格，"
+                   "所以跨行、跨頁的句子也找得到。")
+        q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
+                          placeholder="例如 中國啊　或　讓我們 愛")
+        q = (q or "").strip()
+        if not q:
+            return
+        hits = lib.search(q)
+        if not hits:
+            st.info("找不到符合的歌詞。試試少一點字，或只用其中一個詞。")
+            return
+        cap = (f"{len(hits)} 個結果。"
+               if len(hits) < lyric_search.MAX_HITS
+               else f"超過 {lyric_search.MAX_HITS} 個結果，只顯示前面 "
+                    f"{lyric_search.MAX_HITS} 個——請加詞收窄。")
+        st.caption(cap)
+        labels = [f"{h.song} · 第 {h.no} 頁 — "
+                  f"{lyric_search.snippet(h.text, q)}" for h in hits]
+        pick = st.selectbox("結果", options=list(range(len(hits))),
+                            format_func=lambda i: labels[i],
+                            key=K(f"{base}lysel"))
+        hit = hits[pick]
+        st.markdown("```\n%s\n```" % hit.text)
+        opt1, opt2 = st.columns(2)
+        drop_repeats = opt1.checkbox(
+            "略去重複頁", value=True, key=K(f"{base}lydup"),
+            help="詩歌 deck 常把副歌重複放映；勾選後只匯入每段歌詞一次。")
+        skip_first = opt2.checkbox(
+            "第 1 頁當標題頁", value=True, key=K(f"{base}lyskip"),
+            help="多數歌第 1 頁只有曲名／英文名。但有些歌第 1 頁就是歌詞，"
+                 "這種情況請取消勾選。")
+        n_seg = len(lib.segments(hit.song, drop_repeats, skip_first))
+        b1, b2 = st.columns(2)
+        if b1.button(f"⬇️ 匯入整首（{n_seg} 段）",
+                     key=K(f"{base}lyall"), use_container_width=True):
+            text, n = lib.paste_text(hit.song, drop_repeats, skip_first)
+            if not n:
+                st.warning("這個選項會匯入 0 段——取消「第 1 頁當標題頁」試試。")
+            else:
+                _apply_parsed(uid_kind, uid, text, with_chorus=False)
+        if b2.button("⬇️ 只匯入這一頁", key=K(f"{base}lyone"),
+                     use_container_width=True):
+            _insert_stanza(uid_kind, uid, hit.text)
+        st.caption(f"曲名可填：{hit.song}")
+
+
 def _hymn_preview_html(preview):
     """Inline HTML cards summarising the generated slides of one hymn."""
     cards = []
@@ -2144,6 +2232,7 @@ with tab_edit:
                                       st.session_state.get(
                                           K(f"hymn_{uid}_paste"), ""),
                                       with_chorus=False)
+                    _lyric_search_panel("hymn", uid)
                     for j in range(max(len(h.get("stanzas", ["", ""])), 1)):
                         st.text_area(f"第 {j + 1} 段（每行一句）",
                                      value=sv(f"hymn_{uid}_verses_{j}",
@@ -2261,6 +2350,7 @@ with tab_edit:
             if st.button("匯入為各段", key=K("resp_apply_paste")):
                 _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
                               with_chorus=False)
+            _lyric_search_panel("resp", "")
             for j in range(max(len(ui_resp), 1)):
                 st.session_state.setdefault(
                     K(f"resp_verses_{j}"),
