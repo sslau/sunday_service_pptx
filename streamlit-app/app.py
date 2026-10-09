@@ -1355,15 +1355,38 @@ DROP_REPEATS = True
 SKIP_TITLE_SLIDE = True
 
 
+def _lyric_open(flag_key):
+    """selectbox on_change: ask for the lyrics pop-up on the next render."""
+    st.session_state[flag_key] = True
+
+
+@st.dialog("全首歌詞", width="large")
+def _lyrics_dialog(name, where, slides, query):
+    """Read-only pop-up: the whole song, one 頁 per block, query terms marked."""
+    st.markdown("**%s**　<span style='color:var(--muted)'>(%s)</span>"
+                % (name, where), unsafe_allow_html=True)
+    parts = []
+    for no, text in slides:
+        parts.append(
+            "<div style='color:var(--muted);font-size:.75rem;"
+            "margin:.6rem 0 .15rem'>第 %d 頁</div>" % no)
+        parts.append("<div style='line-height:1.75'>%s</div>"
+                     % lyric_search.highlight(text, query))
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 def _lyric_search_panel(uid_kind, uid):
     """🔍 歌詞庫搜尋 — look a song up in lyrics/*/.lyrics_txt and get its lyrics.
 
-    Each result is one slide of a song deck.  「匯入整首詩歌」 hands the whole song
-    to the 貼上整首詩歌 box in the same "one blank line per 段" protocol that box
-    already uses, so the song can be edited in one place and split afterwards;
-    「只匯入這一頁」 skips that and appends a 段 directly.
+    Results are grouped by song: a song whose chorus repeats on eight slides is
+    listed once, not eight times.  Selecting a song opens a read-only pop-up
+    with its whole lyrics and the query terms highlighted; 「匯入整首詩歌」 hands
+    the whole song to the 貼上整首詩歌 box in the same "one blank line per 段"
+    protocol that box already uses, and 「只匯入第 N 頁」 appends one matched slide
+    as a 段 directly.
     """
     base = _ly_base(uid_kind, uid)
+    open_key = K(f"{base}lyopen")
     try:
         lib = lyric_search.get_library()
     except Exception as exc:                       # unreadable library
@@ -1383,30 +1406,56 @@ def _lyric_search_panel(uid_kind, uid):
         q = (q or "").strip()
         if not q:
             return
-        hits = lib.search(q)
-        if not hits:
+        songs = lib.search_songs(q)
+        if not songs:
             st.info("找不到符合的歌詞。試試少一點字，或只用其中一個詞。")
             return
-        cap = (f"{len(hits)} 個結果。"
-               if len(hits) < lyric_search.MAX_HITS
-               else f"超過 {lyric_search.MAX_HITS} 個結果，只顯示前面 "
-                    f"{lyric_search.MAX_HITS} 個——請加詞收窄。")
+        n_pages = sum(len(s.nos) for s in songs)
+        cap = (f"{len(songs)} 首詩歌（{n_pages} 頁命中）。"
+               if len(songs) < lyric_search.MAX_HITS
+               else f"超過 {lyric_search.MAX_HITS} 首詩歌，只顯示前面 "
+                    f"{lyric_search.MAX_HITS} 首——請加詞收窄。")
         st.caption(cap)
-        # The same hymn appears in several books, so name the book in each row —
-        # otherwise two identical-looking entries are impossible to tell apart.
-        labels = [f"{h.name} · {h.where} · 第 {h.no} 頁 — "
-                  f"{lyric_search.snippet(h.text, q)}" for h in hits]
-        pick = st.selectbox("結果", options=list(range(len(hits))),
+
+        def _snippet_of(s):
+            """First matching line of the song, for the result label."""
+            for no, text, _n in lib.songs[s.key]:
+                if not s.nos or no in s.nos:
+                    return lyric_search.snippet(text, q)
+            return ""
+
+        # 曲名 · 詩集 · 命中頁數 — the book disambiguates two same-named hymns,
+        # and the snippet shows why the row matched.
+        labels = []
+        for s in songs:
+            why = ("命中 %d 頁" % len(s.nos)) if s.nos else "曲名命中"
+            labels.append("%s · %s · %s — %s"
+                          % (s.name, s.where, why, _snippet_of(s)))
+        pick = st.selectbox("結果", options=list(range(len(songs))),
                             format_func=lambda i: labels[i],
-                            key=K(f"{base}lysel"))
-        hit = hits[pick]
-        st.markdown("```\n%s\n```" % hit.text)
+                            key=K(f"{base}lysel"),
+                            on_change=_lyric_open, args=(open_key,),
+                            help="選一首歌即彈出全首歌詞（搜尋字詞會標示）。")
+        hit = songs[pick]
+        # 只匯入第 N 頁 needs one slide; prefer the matched ones, else every page.
+        all_slides = [(no, text) for no, text, _n in lib.songs[hit.key]]
+        text_by_no = dict(all_slides)
+        nos = hit.nos or [no for no, _t in all_slides]
+        if len(nos) > 1:
+            opts = ["第 %d 頁 — %s" % (no, lyric_search.snippet(text_by_no[no], q))
+                    for no in nos]
+            ppick = st.selectbox("匯入哪一頁", options=list(range(len(nos))),
+                                 format_func=lambda i: opts[i],
+                                 key=K(f"{base}lypage"))
+            page_no = nos[ppick]
+        else:
+            page_no = nos[0]
         # Fixed rather than optional: the first page is treated as a title card
         # and repeated pages (a chorus deliberately re-slid in the source deck)
         # are collapsed.  Both were the defaults, and each one is the right call
         # for the overwhelming majority of the library.
         n_seg = len(lib.segments(hit.key, DROP_REPEATS, SKIP_TITLE_SLIDE))
-        b1, b2 = st.columns([1.7, 1])
+        b1, b2, b3 = st.columns([1.5, 1, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
@@ -1418,11 +1467,20 @@ def _lyric_search_panel(uid_kind, uid):
                            "而第 1 頁已當作標題頁略去。")
             else:
                 _ly_fill_paste(uid_kind, uid, text, n)
-        if b2.button("⬇️ 只匯入這一頁", key=K(f"{base}lyone"),
+        if b2.button(f"⬇️ 只匯入第 {page_no} 頁", key=K(f"{base}lyone"),
                      use_container_width=True,
                      help="跳過貼上框，直接在下面加一段。"):
-            _insert_stanza(uid_kind, uid, hit.text)
+            _insert_stanza(uid_kind, uid, text_by_no[page_no])
+        # Opens the same pop-up as selecting a row, without a rerun: the button
+        # click and the check below are in this same run, and the flag is
+        # cleared as the dialog opens so a later rerun does not re-open it.
+        see = b3.button("👁 看全首歌詞", key=K(f"{base}lysee"),
+                        use_container_width=True,
+                        help="彈出視窗顯示全首歌詞，並標示搜尋字詞。")
         st.caption(f"曲名可填：{hit.name}　（{hit.where}）")
+        if see or st.session_state.get(open_key):
+            st.session_state[open_key] = False
+            _lyrics_dialog(hit.name, hit.where, all_slides, q)
 
 
 def _hymn_preview_html(preview):

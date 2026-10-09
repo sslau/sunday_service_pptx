@@ -21,7 +21,8 @@ must all appear on the same slide (or in the song name).
 
 Blocks are handed to the editor through ``paste_text()``, which joins a song's
 slides with one blank line between them — the protocol
-``app._parse_hymn_paste()`` turns into one 段 per slide.
+``app._parse_hymn_paste()`` turns into one 段 per slide.  ``highlight()`` renders
+one slide as HTML with the query terms marked, for the reader pop-up.
 """
 import collections
 import os
@@ -46,6 +47,9 @@ MAX_HITS = 300
 
 # key = unique path id (lookup), name = song name (填曲名), where = collection
 Slide = collections.namedtuple("Slide", "key name where no text")
+# One search result per song: `nos` is the slide numbers where every query term
+# appears (empty when only the song name matched).
+SongHit = collections.namedtuple("SongHit", "key name where nos")
 
 # .txt stems carry a "[2]" style marker on repeat extractions; drop it so the
 # song reads as 愛何等大 rather than 愛何等大[1].
@@ -93,6 +97,70 @@ def snippet(text, query, limit=46):
     return flat if len(flat) <= limit * 2 else flat[:limit * 2] + "…"
 
 
+def _html(s):
+    """Escape `s` for inline HTML and keep its line breaks."""
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+             .replace("\n", "<br>"))
+
+
+def _char_map(text):
+    """(per-character normalised text, original index of each normalised char).
+
+    ``highlight()`` needs to turn a match found in ``norm(text)`` back into a
+    span of the *original* string, which is not a straight slice because
+    matching drops whitespace and punctuation.  Mapping character by character
+    gives that; the normed result is checked against ``norm(text)`` by the
+    caller because a few characters casefold to more than one character.
+    """
+    chars, idx = [], []
+    for i, ch in enumerate(text):
+        n = STRIP_RE.sub("", ch).lower()
+        if n:
+            chars.append(n)
+            idx.append(i)
+    return "".join(chars), idx
+
+
+def highlight(text, query):
+    """`text` as HTML with every occurrence of each query term wrapped in
+    ``<mark>``.  Falls back to plain escaped text when the match cannot be
+    mapped back (or matched nothing), so it is always safe to render."""
+    text = text or ""
+    terms = sorted({norm(t) for t in (query or "").split() if norm(t)},
+                   key=len, reverse=True)
+    ntext = norm(text)
+    if not terms or not ntext:
+        return _html(text)
+    mapped, idx = _char_map(text)
+    if mapped != ntext:
+        return _html(text)
+    spans = []
+    for t in terms:
+        start = 0
+        while True:
+            j = ntext.find(t, start)
+            if j < 0:
+                break
+            spans.append((idx[j], idx[j + len(t) - 1] + 1))
+            start = j + 1
+    if not spans:
+        return _html(text)
+    spans.sort()
+    merged = [list(spans[0])]
+    for a, b in spans[1:]:
+        if a <= merged[-1][1]:          # overlapping or touching terms
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    out, prev = [], 0
+    for a, b in merged:
+        out.append(_html(text[prev:a]))
+        out.append("<mark>%s</mark>" % _html(text[a:b]))
+        prev = b
+    out.append(_html(text[prev:]))
+    return "".join(out)
+
+
 def _parse(raw):
     """[(slide_no, text)] from one ``.txt`` dump, in slide order."""
     marks = list(SLIDE_RE.finditer(raw))
@@ -138,6 +206,29 @@ class LyricLibrary:
                 if len(hits) >= limit:
                     break
         return hits
+
+    def search_songs(self, query, limit=MAX_HITS):
+        """One :class:`SongHit` per matching song, in library order.
+
+        Same matching rule as ``search()`` — every whitespace-separated term —
+        but grouped so a song whose chorus repeats on eight slides is listed
+        once instead of eight times.  A song is included when all terms appear
+        on some slide, or all terms appear in its name; ``nos`` holds the
+        matching slide numbers (empty for a name-only match).
+        """
+        terms = [norm(t) for t in (query or "").split() if norm(t)]
+        if not terms:
+            return []
+        out = []
+        for key, (name, where) in self.meta.items():
+            nname = norm(name)
+            nos = [no for no, _text, ntext in self.songs[key]
+                   if all(t in ntext for t in terms)]
+            if nos or all(t in nname for t in terms):
+                out.append(SongHit(key, name, where, nos))
+                if len(out) >= limit:
+                    break
+        return out
 
     def segments(self, key, drop_repeats=False, skip_first=False):
         """[(slide_no, text)] of one song, ready to become 段.
