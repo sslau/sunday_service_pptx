@@ -1665,13 +1665,12 @@ _CSS = """
 [data-testid="stAlert"] { border-radius:10px; }
 [data-testid="stExpander"] { border-radius:12px; border:1px solid var(--line); }
 
-/* 詩歌 N (and any) panel header that nests further expanders: an obvious,
-   thick-outlined button.  DOM: div[data-testid="stExpander"] > details >
-   summary (stExpanderDetails marks the *content* box).  `:has` scopes this to
-   exactly those headers — the 歌詞庫搜尋/背景圖/預覽 expanders inside them and
-   the OneDrive panel don't nest expanders, so they keep the plain look. */
-div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
-  > details > summary {
+/* Collapser headers (詩歌 N, 背景圖, 預覽這首詩歌的 slides, 歌詞庫搜尋,
+   OneDrive 讀取面板, …): a thick accent outline so the row reads as a
+   button; open sections fill solid accent with white text.  DOM:
+   div[data-testid="stExpander"] > details > summary (stExpanderDetails
+   marks the *content* box, not the header). */
+div[data-testid="stExpander"] > details > summary {
   background: var(--accent-soft);
   border: 2px solid var(--accent) !important;
   border-radius: 10px;
@@ -1679,14 +1678,13 @@ div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
   padding: .5rem .9rem !important;
   font-weight: 700;
 }
-div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
-  > details[open] > summary {
+div[data-testid="stExpander"] > details[open] > summary {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent-2) !important;
 }
-div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
-  > details[open] > summary [data-testid="stExpanderIcon"] { color: #fff; }
+div[data-testid="stExpander"] > details[open] > summary
+  [data-testid="stExpanderIcon"] { color: #fff; }
 .stTabs [data-baseweb="tab-list"] { gap:.35rem; }
 .stTabs [data-baseweb="tab"] {
   border-radius:8px 8px 0 0; padding:.5rem 1rem; font-weight:600; }
@@ -2436,7 +2434,7 @@ with tab_edit:
                     st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
                                "或直接貼上，改完再按「匯入為各段」"
                                "切成各段（每段＝一張 slide）。")
-                    if st.button("匯入為各段",
+                    if st.button("匯入為各段", type="primary",
                                  key=K(f"hymn_{uid}_apply_paste")):
                         _apply_parsed("hymn", uid,
                                       st.session_state.get(
@@ -2562,7 +2560,8 @@ with tab_edit:
             st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
                        "或直接貼上，改完再按「匯入為各段」"
                        "切成各段（每段＝一張 slide）。")
-            if st.button("匯入為各段", key=K("resp_apply_paste")):
+            if st.button("匯入為各段", type="primary",
+                         key=K("resp_apply_paste")):
                 _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
                               with_chorus=False)
             c1, c2 = st.columns(2)
