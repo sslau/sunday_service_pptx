@@ -1441,7 +1441,10 @@ def _lyric_open(flag_key):
     st.session_state[flag_key] = True
 
 
-@st.dialog("全首歌詞", width="large")
+# width="small" is Streamlit's narrowest dialog (a 500px max). Lyrics are short lines, so the
+# 1280px of "large" left the text stranded in a mostly empty box. The only other sizes are
+# "medium" (750px) and "large"; this version takes no pixel value.
+@st.dialog("全首歌詞", width="small")
 def _lyrics_dialog(name, where, slides, query):
     """Read-only pop-up: the whole song, one 頁 per block, query terms marked."""
     st.markdown("**%s**　<span style='color:var(--muted)'>(%s)</span>"
