@@ -2366,7 +2366,8 @@ with tab_edit:
                 badge = _song_badge(uid, h)
                 head = (f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}"
                         + (f" · {badge}" if badge else ""))
-                with st.expander(head, key=K(f"hymn_exp_{uid}")):
+                with st.expander(head, key=K(f"hymn_exp_{uid}"),
+                                 on_change="rerun"):
                     _lyric_search_panel("hymn", uid)
                     st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
                                  value=sv(f"hymn_{uid}_paste", ""),
