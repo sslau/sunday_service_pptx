@@ -1356,11 +1356,9 @@ def _ly_fill_paste(uid_kind, uid, text, n_seg):
                "可直接在上方整首編輯，再按「匯入為各段」切成各段。")
 
 
-# Whole-song import policy.  Fixed, not a per-import choice: slide 1 of these
-# decks is normally a title card, and song decks repeat the chorus on purpose,
-# so importing them verbatim produces a junk first 段 and duplicated ones.
-DROP_REPEATS = True
-SKIP_TITLE_SLIDE = True
+# Whole-song import keeps every page: one page becomes one 段.  Nothing is
+# dropped (no title-card skip, no repeat collapsing), so the count in the
+# 「匯入整首詩歌（N 段）」 button is the song's page count.
 
 
 def _lyric_open(flag_key):
@@ -1458,23 +1456,18 @@ def _lyric_search_panel(uid_kind, uid):
             page_no = nos[ppick]
         else:
             page_no = nos[0]
-        # Fixed rather than optional: the first page is treated as a title card
-        # and repeated pages (a chorus deliberately re-slid in the source deck)
-        # are collapsed.  Both were the defaults, and each one is the right call
-        # for the overwhelming majority of the library.
-        n_seg = len(lib.segments(hit.key, DROP_REPEATS, SKIP_TITLE_SLIDE))
+        # Nothing is dropped: one page becomes one 段, so the count in the
+        # button matches the song's page count.  A source deck that re-slides
+        # its chorus after every verse keeps those pages as their own 段.
+        n_seg = len(lib.segments(hit.key))
         b1, b2, b3 = st.columns([1.5, 1, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
                      help="把全部頁的歌詞貼進「貼上整首詩歌」，"
                           "不會直接改動下面的各段。"):
-            text, n = lib.paste_text(hit.key, DROP_REPEATS, SKIP_TITLE_SLIDE)
-            if not n:
-                st.warning("這個選項會匯入 0 段——這首歌只有第 1 頁有歌詞，"
-                           "而第 1 頁已當作標題頁略去。")
-            else:
-                _ly_fill_paste(uid_kind, uid, text, n)
+            text, n = lib.paste_text(hit.key)
+            _ly_fill_paste(uid_kind, uid, text, n)
         if b2.button(f"⬇️ 只匯入第 {page_no} 頁", key=K(f"{base}lyone"),
                      use_container_width=True,
                      help="跳過貼上框，直接在下面加一段。"):

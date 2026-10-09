@@ -230,30 +230,20 @@ class LyricLibrary:
                     break
         return out
 
-    def segments(self, key, drop_repeats=False, skip_first=False):
-        """[(slide_no, text)] of one song, ready to become 段.
+    def segments(self, key):
+        """[(slide_no, text)] of one song, ready to become 段 — every page.
 
         `key` is the unique id from ``search()``; a bare song name is accepted
         too and resolves to the first song with that name.
 
-        `drop_repeats` removes slides whose text repeats one already seen, since
-        the dumps come from song decks where the chorus is deliberately
-        re-slid.  `skip_first` treats slide 1 as a title card; it is opt-in
-        because for some songs slide 1 is a real verse.
+        Nothing is dropped.  One page becomes one 段, so the count the UI shows
+        matches the page count, and a source deck that re-slides its chorus
+        after every verse keeps those pages as their own 段 rather than having
+        them silently merged away.
         """
         segs = list(self.songs.get(key)
                     or self.songs.get(self._find(key) or "")
                     or [])
-        if skip_first:
-            segs = segs[1:]
-        if drop_repeats:
-            seen, uniq = set(), []
-            for no, text, ntext in segs:
-                if ntext and ntext in seen:
-                    continue
-                seen.add(ntext)
-                uniq.append((no, text, ntext))
-            segs = uniq
         return [(no, text) for no, text, _ in segs]
 
     def _find(self, song):
@@ -263,10 +253,10 @@ class LyricLibrary:
                 return key
         return None
 
-    def paste_text(self, key, drop_repeats=False, skip_first=False):
+    def paste_text(self, key):
         """(text, n_segments) with one blank line between segments — the
-        protocol ``app._parse_hymn_paste()`` splits into 段."""
-        segs = self.segments(key, drop_repeats, skip_first)
+        protocol ``app._parse_hymn_paste()`` splits into 段.  One page per 段."""
+        segs = self.segments(key)
         return "\n\n".join(t for _, t in segs), len(segs)
 
 
