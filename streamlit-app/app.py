@@ -2373,10 +2373,14 @@ with tab_edit:
             for i, h in enumerate(hymns_ui):
                 uid = h["_id"]
                 badge = _song_badge(uid, h)
-                head = (f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}"
-                        + (f" · {badge}" if badge else ""))
-                with st.expander(head, key=K(f"hymn_exp_{uid}"),
+                # The label is part of a keyed expander's identity, so it must
+                # stay constant: a live title/段數 here changes the widget id on
+                # every keystroke and Streamlit remounts the panel shut.  The
+                # live title/status go on the line inside and in the strip above.
+                with st.expander(f"詩歌 {i + 1}", key=K(f"hymn_exp_{uid}"),
                                  on_change="rerun"):
+                    st.caption(
+                        f"{_song_title(uid, h) or '（未命名）'} · {badge}")
                     _lyric_search_panel("hymn", uid)
                     st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
                                  value=sv(f"hymn_{uid}_paste", ""),
