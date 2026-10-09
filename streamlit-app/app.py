@@ -200,15 +200,23 @@ def song_bg_options(current):
 def _bg_picker(wkey, default):
     """背景圖縮圖點選 + 上傳存檔 + 預覽（詩歌敬拜／詩歌回應共用）。
 
-    Each background is a clickable thumbnail; the picked file (or the 依序
-    default, ``""``) is stored under ``K(wkey)`` — the same slot the old
-    selectbox used, so nothing else reads it differently.
+    Each background is picked with the checkbox under its thumbnail; the picked
+    file (or the 依序 default, ``""``) is stored under ``K(wkey)`` — the same
+    slot the old selectbox used, so nothing else reads it differently.
     """
     current = sv(wkey, default)
     opts = song_bg_options(current)
 
     def _choose(opt):
         st.session_state[K(wkey)] = opt
+        # Radio behaviour: un-tick every other background so only the picked
+        # one stays checked.  Runs as an `on_change` callback — that is, at the
+        # clicked checkbox's position in this run — so writing the *other* (or
+        # already-created) checkbox keys here is legal; they re-render on the
+        # next pass with their updated stored values.
+        for j, o in enumerate(opts):
+            if o != opt:
+                st.session_state[K(f"{wkey}_bgck_{j}")] = False
 
     thumb_cols = st.columns(len(opts) if opts else 1)
     for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
@@ -231,10 +239,15 @@ def _bg_picker(wkey, default):
                     + ("var(--accent);font-weight:700;" if chosen else "var(--muted);")
                     + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
                     '</div>', unsafe_allow_html=True)
-            st.button("✓ 使用中" if chosen else "選用",
-                      key=K(f"{wkey}_bgopt_{i}"),
-                      use_container_width=True, on_click=_choose, args=(opt,))
-    st.caption("點縮圖下方的「選用」即套用該背景（第一格「依序」＝照既定順序）。")
+            # Keyed checkboxes: the auto-generated id of two identical unkeyed
+            # ones collides, so each gets a key; the callback keeps the row
+            # acting like a radio (see `_choose`).
+            st.checkbox("✓ 使用中" if chosen else "選用",
+                        value=chosen,
+                        key=K(f"{wkey}_bgck_{i}"),
+                        on_change=_choose, args=(opt,))
+    st.caption("點縮圖下方的勾選框即套用該背景（第一格「依序」＝照既定順序，"
+               "同一個背景只會勾一個）。")
     up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
                           "可供所有詩歌選擇）",
                           type=["jpg", "jpeg", "png"],
