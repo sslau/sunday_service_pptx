@@ -1316,8 +1316,6 @@ def _ly_drain(uid_kind, uid):
             vals.insert(i + 1, vals[i])
     elif action == "add":
         vals.append("")
-    elif action == "insert":
-        vals.append(args[0])
     else:
         return
     _ly_commit(uid_kind, uid, vals)
@@ -1401,11 +1399,6 @@ def _song_badge(uid, h):
     return f"{len(vals)} 段"
 
 
-def _insert_stanza(uid_kind, uid, text):
-    """Append one 段 to a song without touching the rest."""
-    _ly_queue(uid_kind, uid, "insert", text)
-
-
 _TITLE_FIELDS = (("title", "曲名"), ("subtitle", "英文名"), ("source", "詩集"),
                  ("music", "曲"), ("lyricist", "詞"))
 
@@ -1470,8 +1463,7 @@ def _lyric_search_panel(uid_kind, uid):
     listed once, not eight times.  Selecting a song opens a read-only pop-up
     with its whole lyrics and the query terms highlighted; 「匯入整首詩歌」 hands
     the whole song to the 貼上整首詩歌 box in the same "one blank line per 段"
-    protocol that box already uses, and 「只匯入第 N 頁」 appends one matched slide
-    as a 段 directly.
+    protocol that box already uses.
     """
     base = _ly_base(uid_kind, uid)
     open_key = K(f"{base}lyopen")
@@ -1525,25 +1517,13 @@ def _lyric_search_panel(uid_kind, uid):
                             on_change=_lyric_open, args=(open_key,),
                             help="選一首歌即彈出全首歌詞（搜尋字詞會標示）。")
         hit = songs[pick]
-        # 只匯入第 N 頁 needs one slide; prefer the matched ones, else every page.
         all_slides = [(no, text) for no, text, _n in lib.songs[hit.key]]
-        text_by_no = dict(all_slides)
-        nos = hit.nos or [no for no, _t in all_slides]
-        if len(nos) > 1:
-            opts = ["第 %d 頁 — %s" % (no, lyric_search.snippet(text_by_no[no], q))
-                    for no in nos]
-            ppick = st.selectbox("匯入哪一頁", options=list(range(len(nos))),
-                                 format_func=lambda i: opts[i],
-                                 key=K(f"{base}lypage"))
-            page_no = nos[ppick]
-        else:
-            page_no = nos[0]
         # 匯入整首詩歌: the title card (slide 1, when there is one) fills the
         # metadata boxes and is left out of the 段, because the deck builds its
         # own title slide from those fields.  Every other page becomes one 段, so
         # a source deck that re-slides its chorus after every verse keeps them.
         info, text, n_seg = lib.import_song(hit.key)
-        b1, b2, b3 = st.columns([1.5, 1, 1])
+        b1, b3 = st.columns([1.5, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
@@ -1551,10 +1531,6 @@ def _lyric_search_panel(uid_kind, uid):
                           "曲名／英文名／詩集／曲／詞，不計入段數。"
                           "不會直接改動下面的各段。"):
             _ly_fill_paste(uid_kind, uid, text, n_seg, info)
-        if b2.button(f"⬇️ 只匯入第 {page_no} 頁", key=K(f"{base}lyone"),
-                     use_container_width=True,
-                     help="跳過貼上框，直接在下面加一段。"):
-            _insert_stanza(uid_kind, uid, text_by_no[page_no])
         # Opens the same pop-up as selecting a row, without a rerun: the button
         # click and the check below are in this same run, and the flag is
         # cleared as the dialog opens so a later rerun does not re-open it.
