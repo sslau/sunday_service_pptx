@@ -1241,7 +1241,7 @@ def _ly_queue(uid_kind, uid, action, *args):
     """Record a 段 change and rerun, so `_ly_stanza_editors` applies it.
 
     Streamlit refuses to write a widget key once that widget has been
-    instantiated in the current run (`StreamlitAPIException`), and the ▲▼📋🗑
+    instantiated in the current run (`StreamlitAPIException`), and the ▲▼⧉🗑
     controls and ＋新增一段 all live *after* — or inside — the stanza loop, so
     `verses_0…verses_j` are already real widgets by the time they are clicked.
     The top of the next run, before the loop re-creates them, is the only point
@@ -1291,7 +1291,7 @@ def _ly_drain(uid_kind, uid):
 
 
 def _ly_stanza_editors(uid_kind, uid):
-    """The 段 list for one song: a text box per 段, each with ▲▼ to reorder, 📋 to
+    """The 段 list for one song: a text box per 段, each with ▲▼ to reorder, ⧉ to
     duplicate and 🗑 to delete.
 
     Streamlit has no drag-and-drop list widget (checked 1.56.0 — the `drag` hits
@@ -1319,14 +1319,14 @@ def _ly_stanza_editors(uid_kind, uid):
         if dn.button("▼", key=K(f"{base}dn_{j}"), help="這一段下移",
                      use_container_width=True, disabled=(j == n - 1)):
             clicked = ("move", j, +1)
-        if dup.button("📋", key=K(f"{base}dup_{j}"),
+        if dup.button("⧉", key=K(f"{base}dup_{j}"),
                       help="複製這一段，插在它下面",
                       use_container_width=True):
             clicked = ("dup", j)
         if rm.button("🗑", key=K(f"{base}rm_{j}"), help="刪除這一段",
                      use_container_width=True):
             clicked = ("drop", j)
-        gap.caption(f"共 {n} 段 · ▲▼ 調整次序，📋 複製，🗑 刪除")
+        gap.caption(f"共 {n} 段 · ▲▼ 調整次序，⧉ 複製，🗑 刪除")
         st.text_area(f"第 {j + 1} 段（每行一句）",
                      value=sv(f"{base}verses_{j}",
                               src[j] if j < len(src) else ""),
