@@ -1346,10 +1346,14 @@ def _focus_hymn(uid, uids):
 
     Runs as an `on_click` callback, i.e. before the next pass builds anything, so
     writing the expanders' keys here is legal.  The expanders are keyed
-    (`hymn_exp_<uid>`) and pre-seeded, so the stored value wins over the default.
+    (`hymn_exp_<uid>`) and track state (`on_change="rerun"`), so the stored value
+    wins over the default and the panel really opens.
     """
     for u in uids:
         st.session_state[K(f"hymn_exp_{u}")] = (u == uid)
+    h = next((x for x in _get_ui("hymns") if x.get("_id") == uid), None)
+    name = (_song_title(uid, h) if h is not None else "") or "（未命名）"
+    st.toast(f"已展開：{name}")
 
 
 def _song_badge(uid, h):
@@ -2342,6 +2346,7 @@ with tab_edit:
                 for i, h in enumerate(hymns_ui):
                     uid = h["_id"]
                     badge = _song_badge(uid, h)
+                    open_now = bool(st.session_state.get(K(f"hymn_exp_{uid}")))
                     with summary[i], st.container(border=True):
                         st.markdown(
                             "<div style='font-size:.72rem;color:var(--muted);"
@@ -2356,6 +2361,10 @@ with tab_edit:
                                 f"{badge}</div>", unsafe_allow_html=True)
                         else:
                             st.caption(badge)
+                        if open_now:
+                            st.markdown(
+                                "<div style='color:var(--accent);font-size:.78rem'>"
+                                "▾ 目前展開</div>", unsafe_allow_html=True)
                         st.button("前往編輯", key=K(f"hymn_goto_{uid}"),
                                   use_container_width=True,
                                   on_click=_focus_hymn,
