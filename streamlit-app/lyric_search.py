@@ -103,21 +103,43 @@ def _line_set(text):
 
 
 def _song_title(name):
-    """The hymn title without its leading book number or a trailing "(b)"."""
-    return _TRAIL_ED_RE.sub("", _LEAD_NO_RE.sub("", name or "")).strip()
+    """The hymn title without its book number or a trailing "(b)".
+
+    Some collections name the dump after the book number on both sides
+    (``88每一天88``); a matching pair is stripped so the title can be matched on
+    its own.
+    """
+    s = (name or "").strip()
+    m = re.match(r"^\s*(\d+)\s*(.*?)\s*(\d+)\s*$", s)
+    if m and m.group(1) == m.group(3):
+        s = m.group(2)
+    return _TRAIL_ED_RE.sub("", _LEAD_NO_RE.sub("", s)).strip()
 
 
 def _is_title_card(pages, name):
-    """True when slide 1 is a title card (the title and/or a book marker alone)."""
+    """True when slide 1 is a title card (the title and/or a book marker alone).
+
+    A title card is normally just a few lines (title, book marker, credits).
+    Some decks (美樂頌, 輔助本) also bake a running header onto every page —
+    slide 1 included — so the card can be long.  There the book marker is the
+    tell, provided the next page does not carry it too: if it does, that is a
+    running header printed on every page, not a card.
+    """
     if not pages:
         return False
     text = pages[0][1]
-    if not (1 <= len(_line_set(text)) <= 6):
-        return False
-    if _BOOK_RE.search(text):
-        return True
+    has_book = bool(_BOOK_RE.search(text))
     title = norm(_variant(_song_title(name)))
-    return bool(title) and title in norm(_variant(text))
+    has_title = bool(title) and title in norm(_variant(text))
+    if len(_line_set(text)) <= 6:
+        return has_book or has_title
+    return (has_book and has_title
+            and not (len(pages) > 1 and _BOOK_RE.search(pages[1][1])))
+
+
+def _same_card(s, ref):
+    """True when ``s`` repeats the title-card lines of ``ref`` and little else."""
+    return len(s) <= len(ref) + 1 and len(s & ref) >= len(ref) - 1
 
 
 def first_copy(pages, name):
@@ -135,13 +157,20 @@ def first_copy(pages, name):
     if len(pages) < 3 or not _is_title_card(pages, name):
         return pages
     ref = _line_set(pages[0][1])
-    carries = [i for i, (_no, text) in enumerate(pages)
-               if len(_line_set(text) & ref) >= 2]
+    if len(ref) > 6:
+        # Slide 1 is a title card sharing the page with a running header (see
+        # _is_title_card), so most of ``ref`` sits on every page and the usual
+        # overlap test is useless.  Only a page repeating slide 1 almost whole
+        # — header plus title lines, no extra verse — marks the next copy.
+        carries = [i for i, (_no, text) in enumerate(pages)
+                   if _same_card(_line_set(text), ref)]
+    else:
+        carries = [i for i, (_no, text) in enumerate(pages)
+                   if len(_line_set(text) & ref) >= 2]
     for i in carries:
         if i == 0 or (i - 1) in carries:        # still the same running header
             continue
-        s = _line_set(pages[i][1])
-        if len(s) <= len(ref) + 1 and len(s & ref) >= len(ref) - 1:
+        if _same_card(_line_set(pages[i][1]), ref):
             return pages[:i]
     return pages
 
@@ -154,12 +183,14 @@ def _credit_kind(label):
     return music, lyric
 
 
-def _title_match(cands, want):
+def _title_match(cands, want, fallback=True):
     """The candidate line matching the song's display name, else the first.
 
     ``want`` is the normalised display name; the title card can put the album or
     publisher ahead of the title (``普天頌讚 / 高唱主名歌``), so the name picks
-    the real title instead of blindly taking the first Chinese line.
+    the real title instead of blindly taking the first Chinese line.  With
+    ``fallback=False`` nothing is returned when the name matches no line, so the
+    caller can try the other script before settling for a guess.
     """
     if want:
         scored = []
@@ -173,6 +204,8 @@ def _title_match(cands, want):
                 scored.append((1, min(len(n), len(want)), cand))
         if scored:
             return max(scored)[2]
+        if not fallback:
+            return ""
     return cands[0] if cands else ""
 
 
@@ -222,7 +255,9 @@ def parse_title_card(pages, name):
     cjk = [x for x in rest if _CJK_RE.search(x) and not _BOOK_RE.search(x)]
     latin = [x for x in rest if _LATIN_RE.search(x) and not _CJK_RE.search(x)
              and not _BOOK_RE.search(x)]
-    title = _title_match(cjk, want) or _title_match(latin, want)
+    title = (_title_match(cjk, want, fallback=False)
+             or _title_match(latin, want, fallback=False)
+             or _title_match(cjk, want) or _title_match(latin, want))
     subtitle = next((x for x in latin if x != title), "")
     source = next((x for x in rest if _BOOK_RE.search(x)), "")
     if not source:
