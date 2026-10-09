@@ -2394,9 +2394,10 @@ with tab_edit:
                                  value=sv(f"hymn_{uid}_paste", ""),
                                  key=K(f"hymn_{uid}_paste"), height=300)
                     st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                               "或直接貼上，改完再按「匯入為各段」"
-                               "切成各段（每段＝一張 slide）。")
+                               "或直接貼上，改完再按下方藍色"
+                               "「匯入為各段」切成各段（每段＝一張 slide）。")
                     if st.button("匯入為各段", type="primary",
+                                 use_container_width=True,
                                  key=K(f"hymn_{uid}_apply_paste")):
                         _apply_parsed("hymn", uid,
                                       st.session_state.get(
@@ -2520,9 +2521,10 @@ with tab_edit:
                          value=sv("resp_paste", ""), key=K("resp_paste"),
                          height=300)
             st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                       "或直接貼上，改完再按「匯入為各段」"
-                       "切成各段（每段＝一張 slide）。")
+                       "或直接貼上，改完再按下方藍色"
+                       "「匯入為各段」切成各段（每段＝一張 slide）。")
             if st.button("匯入為各段", type="primary",
+                         use_container_width=True,
                          key=K("resp_apply_paste")):
                 _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
                               with_chorus=False)
