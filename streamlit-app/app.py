@@ -198,18 +198,20 @@ def song_bg_options(current):
 
 
 def _bg_picker(wkey, default):
-    """背景圖 selectbox + 上傳存檔 + 預覽 + 可選縮圖列（詩歌敬拜／詩歌回應共用）。"""
+    """背景圖縮圖點選 + 上傳存檔 + 預覽（詩歌敬拜／詩歌回應共用）。
+
+    Each background is a clickable thumbnail; the picked file (or the 依序
+    default, ``""``) is stored under ``K(wkey)`` — the same slot the old
+    selectbox used, so nothing else reads it differently.
+    """
     current = sv(wkey, default)
     opts = song_bg_options(current)
-    labels = {o: ("（依序：song_bg1…）" if not o
-                  else os.path.basename(o)) for o in opts}
-    st.selectbox("背景圖", opts,
-                 index=opts.index(current) if current in opts else 0,
-                 format_func=lambda o: labels.get(o, o),
-                 key=K(wkey))
-    st.caption("下拉選單僅支援文字，下方縮圖僅供確認所選背景")
+
+    def _choose(opt):
+        st.session_state[K(wkey)] = opt
+
     thumb_cols = st.columns(len(opts) if opts else 1)
-    for col, opt in zip(thumb_cols, opts):
+    for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
         with col:
             chosen = opt == current
             cand = ""
@@ -229,6 +231,10 @@ def _bg_picker(wkey, default):
                     + ("var(--accent);font-weight:700;" if chosen else "var(--muted);")
                     + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
                     '</div>', unsafe_allow_html=True)
+            st.button("✓ 使用中" if chosen else "選用",
+                      key=K(f"{wkey}_bgopt_{i}"),
+                      use_container_width=True, on_click=_choose, args=(opt,))
+    st.caption("點縮圖下方的「選用」即套用該背景（第一格「依序」＝照既定順序）。")
     up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
                           "可供所有詩歌選擇）",
                           type=["jpg", "jpeg", "png"],
@@ -242,7 +248,7 @@ def _bg_picker(wkey, default):
             fh.write(up.getbuffer())
         st.session_state[K(wkey)] = os.path.relpath(path, os.getcwd())
         st.rerun()
-    st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在選單）；"
+    st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在縮圖列）；"
                "上傳的圖片只存本機，要放上 Cloud 請把 media/ 一起提交到 Git。")
     if current:
         cand = current if os.path.isfile(current) else \
