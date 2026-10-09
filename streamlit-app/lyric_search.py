@@ -54,6 +54,12 @@ SongHit = collections.namedtuple("SongHit", "key name where nos")
 # .txt stems carry a "[2]" style marker on repeat extractions; drop it so the
 # song reads as 愛何等大 rather than 愛何等大[1].
 _DUP_SUFFIX_RE = re.compile(r"\[\d+\]$")
+# A title card carries the hymn number in its book ("聖詩 14", "輔助本 3",
+# "Hymn 488-1", "美樂頌 62").
+_BOOK_RE = re.compile(r"(聖詩|輔助本|美樂頌|Hymn|Sup)\s*\d", re.I)
+# Leading book number / trailing edition letter on a display name.
+_LEAD_NO_RE = re.compile(r"^\s*\d+\s*")
+_TRAIL_ED_RE = re.compile(r"[（(][A-Za-z0-9][)）]\s*$")
 
 
 def norm(s):
@@ -64,6 +70,63 @@ def norm(s):
 def display_name(stem):
     """Song name for display: the filename without a ``[n]`` duplicate marker."""
     return _DUP_SUFFIX_RE.sub("", stem)
+
+
+def _variant(s):
+    """Fold 祢/祂 to 你/他 so a title card matches the name spelled either way."""
+    return (s or "").replace("祢", "你").replace("祂", "他")
+
+
+def _lines(text):
+    return [x for x in (text or "").split("\n") if x.strip()]
+
+
+def _line_set(text):
+    return {norm(x) for x in _lines(text)}
+
+
+def _song_title(name):
+    """The hymn title without its leading book number or a trailing "(b)"."""
+    return _TRAIL_ED_RE.sub("", _LEAD_NO_RE.sub("", name or "")).strip()
+
+
+def _is_title_card(pages, name):
+    """True when slide 1 is a title card (the title and/or a book marker alone)."""
+    if not pages:
+        return False
+    text = pages[0][1]
+    if not (1 <= len(_line_set(text)) <= 6):
+        return False
+    if _BOOK_RE.search(text):
+        return True
+    title = norm(_variant(_song_title(name)))
+    return bool(title) and title in norm(_variant(text))
+
+
+def first_copy(pages, name):
+    """``pages`` up to the second copy of the song, or all of them.
+
+    These decks usually hold several editions ("copies") of one hymn, each
+    introduced by the same title card, so importing the whole song used to drag
+    every edition in.  Keep the first: cut at the first later page that repeats
+    slide 1's title card.  A page that brings the title lines back *after a
+    gap* starts a new copy; one that keeps repeating them without a gap is a
+    running header (the title printed on every slide), which marks nothing, so
+    those decks come back untouched.  When slide 1 is not a title card the deck
+    is also left alone — guessing there would risk deleting real verses.
+    """
+    if len(pages) < 3 or not _is_title_card(pages, name):
+        return pages
+    ref = _line_set(pages[0][1])
+    carries = [i for i, (_no, text) in enumerate(pages)
+               if len(_line_set(text) & ref) >= 2]
+    for i in carries:
+        if i == 0 or (i - 1) in carries:        # still the same running header
+            continue
+        s = _line_set(pages[i][1])
+        if len(s) <= len(ref) + 1 and len(s & ref) >= len(ref) - 1:
+            return pages[:i]
+    return pages
 
 
 def tidy(text):
@@ -236,10 +299,12 @@ class LyricLibrary:
         `key` is the unique id from ``search()``; a bare song name is accepted
         too and resolves to the first song with that name.
 
-        Nothing is dropped.  One page becomes one 段, so the count the UI shows
-        matches the page count, and a source deck that re-slides its chorus
-        after every verse keeps those pages as their own 段 rather than having
-        them silently merged away.
+        One page becomes one 段, so the count the UI shows matches the page
+        count and a source deck that re-slides its chorus after every verse
+        keeps those pages as their own 段 rather than having them merged away.
+        Extra editions of the hymn are already trimmed at load time by
+        :func:`first_copy`, so "every page" here means every page of the first
+        copy.
         """
         segs = list(self.songs.get(key)
                     or self.songs.get(self._find(key) or "")
@@ -315,7 +380,8 @@ def get_library():
             continue
         if not segs:
             continue        # a dump with no extractable text: nothing to search
-        songs[key] = [(no, text, norm(text)) for no, text in segs]
+        first = first_copy(segs, name)
+        songs[key] = [(no, text, norm(text)) for no, text in first]
         meta[key] = (name, coll)
     _LIBRARY = LyricLibrary(LYRICS_ROOT, songs, meta)
     _STAMP = stamp
