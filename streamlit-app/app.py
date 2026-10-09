@@ -76,6 +76,7 @@ def K(name):
 # 密碼放在 `.streamlit/secrets.toml` 的 `app_password`（被 .gitignore 排除，
 # 部署時請在 Streamlit Cloud 的 Settings → Secrets 貼上同一欄位）。
 # 沒有設定 app_password 時會放行，但顯示黃色提醒。
+# 在本機（loopback：localhost / 127.0.0.1 / ::1）開啟時直接放行，見 `_is_local`。
 
 try:
     APP_PASSWORD = st.secrets.get("app_password") or None
@@ -85,6 +86,28 @@ except Exception:
 
 def _auth_ok():
     return bool(st.session_state.get("auth_ok", False))
+
+
+def _is_local():
+    """True when the browser is on this machine, so the password gate is skipped.
+
+    Streamlit reports the client IP and gives ``None`` for loopback
+    (127.0.0.1 / ::1).  That is the signal to trust here: running the app on the
+    presenter's own machine should not ask for the password.  The Host header is
+    only a fallback when the IP is unavailable.  This is a convenience, not a
+    security boundary — the header can be spoofed.
+    """
+    try:
+        if st.context.ip_address is None:
+            return True
+    except Exception:
+        pass
+    try:
+        host = dict(st.context.headers or {}).get("Host") or ""
+    except Exception:
+        host = ""
+    host = host.rsplit("@", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def sv(name, default=""):
@@ -125,33 +148,37 @@ def _log_action(label, detail=""):
 
 
 if not _auth_ok():
-    with st.container(border=True):
-        st.subheader("🔒 崇拜投影片編輯器 — 請登入")
-        with st.form(K("gate_form"), clear_on_submit=False):
-            st.text_input("密碼", type="password", key=K("gate_password"),
-                          placeholder="請輸入密碼後按 Enter 或「登入」")
-            submitted = st.form_submit_button("登入", type="primary")
-    if submitted:
-        meta = _request_meta()
-        ok = False
-        if APP_PASSWORD is None:
-            st.warning("尚未設定 app_password（在 Settings → Secrets）。"
-                       "未設定密碼前先放行。")
-            ok = True
-        elif sv("gate_password") == APP_PASSWORD:
-            ok = True
-        else:
-            st.error("密碼錯誤，請重試。")
-        login_log.append_login("success" if ok else "failed", **meta,
-                               secrets=st_secrets)
-        if ok:
-            sess = uuid.uuid4().hex[:8]
-            st.session_state["auth_session"] = sess
-            login_log.new_session(sess, ip=meta.get("ip", ""),
-                                  ua=meta.get("ua", ""), secrets=st_secrets)
-            st.session_state["auth_ok"] = True
-            st.rerun()
-    st.stop()
+    if _is_local():
+        # On the presenter's own machine (loopback): no password needed.
+        st.session_state["auth_ok"] = True
+    else:
+        with st.container(border=True):
+            st.subheader("🔒 崇拜投影片編輯器 — 請登入")
+            with st.form(K("gate_form"), clear_on_submit=False):
+                st.text_input("密碼", type="password", key=K("gate_password"),
+                              placeholder="請輸入密碼後按 Enter 或「登入」")
+                submitted = st.form_submit_button("登入", type="primary")
+        if submitted:
+            meta = _request_meta()
+            ok = False
+            if APP_PASSWORD is None:
+                st.warning("尚未設定 app_password（在 Settings → Secrets）。"
+                           "未設定密碼前先放行。")
+                ok = True
+            elif sv("gate_password") == APP_PASSWORD:
+                ok = True
+            else:
+                st.error("密碼錯誤，請重試。")
+            login_log.append_login("success" if ok else "failed", **meta,
+                                   secrets=st_secrets)
+            if ok:
+                sess = uuid.uuid4().hex[:8]
+                st.session_state["auth_session"] = sess
+                login_log.new_session(sess, ip=meta.get("ip", ""),
+                                      ua=meta.get("ua", ""), secrets=st_secrets)
+                st.session_state["auth_ok"] = True
+                st.rerun()
+        st.stop()
 
 
 def song_bg_files():
