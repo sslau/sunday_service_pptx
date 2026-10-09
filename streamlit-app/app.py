@@ -16,7 +16,6 @@ import re
 import tempfile
 import uuid
 import html
-import zipfile
 
 import streamlit as st
 
@@ -1905,6 +1904,22 @@ def _saved_mp4_bytes(date):
         return None
 
 
+def _video_result_tail(ns, vid, fname, note):
+    """Download button + 併入第一頁 for a ready MP4 (uploaded or generated)."""
+    st.download_button(
+        "⬇️ 下載 MP4", data=vid, file_name=fname,
+        mime="video/mp4", key=K(f"video_dl{ns}"))
+    st.caption(note)
+    first_toggle = st.checkbox(
+        "把影片併入整場投影片的第一頁\n"
+        "（自動循環播放，直到點擊下一頁）",
+        value=True, key=K(f"video_first_deck{ns}"))
+    save_video_meta(DATE, bool(first_toggle))
+    if first_toggle:
+        st.caption("記得按左上「製成完整投影片」的按鈕，"
+                   "影片才會被放入第一頁。")
+
+
 def render_video_panel(ns="", num="D",
                        title="🎞 家事分享投影片 → MP4"):
     """The section-D MP4 panel, reusable in the 「製作成投影片」 tab (D) and as
@@ -1912,9 +1927,12 @@ def render_video_panel(ns="", num="D",
     in the same run; the produced MP4 is stored under the shared video_data key
     so the sidebar 製成 flow always sees it."""
     section_header(num, title,
-                   "上載 PNG/JPG 圖片或 ZIP，或選用週期內容，只取部分項目產製影片")
-    st.caption("投影片在 **Server 端**以 Pillow 製成 H.264 影片"
-               "（純 Python，雲端可執行，不佔本機軟體）。")
+                   "直接上載 PowerPoint 匯出的 MP4，或選用週期家事分享內容產製")
+    st.caption("**從 PowerPoint 匯出 MP4**：開啟投影片 → 檔案 → 匯出 → "
+               "建立影片（或「匯出影片」），選 1080p 並等待匯出，"
+               "再把 .mp4 上載到下方「① 直接上載」。"
+               "若尚未備好影片，也可選用週期家事分享內容，由 **Server 端**以 "
+               "Pillow 製成 H.264 影片（純 Python，雲端可執行）。")
     ann_vsnap = st.session_state.get(K("video_snap_s9")) or {}
     ann_pptx = ((ann_vsnap.get("pptx") if ann_vsnap.get("kind") == "pptx"
                  else None) or st.session_state.get(K("build_ann")))
@@ -1926,68 +1944,17 @@ def render_video_panel(ns="", num="D",
                 up = st.session_state.get(K(f"build_annimg_{i}"))
                 if up is not None:
                     ann_images[i] = up
-    video_imgs = st.file_uploader(
-        "① 直接上載 PNG/JPG 圖片（一檔一頁）——最精確，畫面即所見",
-        type=["png", "jpg", "jpeg", "webp"],
-        accept_multiple_files=True, key=K(f"video_imgs{ns}"))
-    zip_file = st.file_uploader(
-        "② 或 ZIP（內含投影片圖片；檔名編號 = 投影片編號，如 slide_1.png）",
-        type=["zip"], key=K(f"video_zip{ns}"))
+    video_mp4 = st.file_uploader(
+        "① 直接上載 PowerPoint 匯出的 MP4（不需再產製）",
+        type=["mp4"], key=K(f"video_mp4{ns}"))
     vdate = date_from_filename(
         getattr(ann_pptx, "name", "") if ann_pptx is not None else "")
     src_kind, src_items, src_pptx_bytes = "none", [], None
-    zip_map = {}
-    if video_imgs:
-        src_kind = "images"
-        src_items = [u for u in video_imgs]
-        st.caption(f"使用上載圖片：{len(src_items)} 張，一檔一頁。")
-    elif zip_file is not None:
-        src_kind = "zip"
-        try:
-            with zipfile.ZipFile(io.BytesIO(zip_file.getvalue())) as zf:
-                entries = []
-                for zi in zf.infolist():
-                    if zi.is_dir() or "__MACOSX/" in zi.filename \
-                            or ".DS_Store" in zi.filename:
-                        continue
-                    base = zi.filename.rsplit("/", 1)[-1].lower()
-                    if not (base.endswith(".png") or base.endswith(".jpg")
-                            or base.endswith(".jpeg")
-                            or base.endswith(".webp")):
-                        continue
-                    entries.append((zi.filename, zf.read(zi)))
-                if not entries:
-                    st.caption("ZIP 內沒有 PNG/JPG/WEBP 圖片。")
-                else:
-                    maxnum = 0
-                    for name, _b in entries:
-                        m = re.search(r"(\d+)", name.rsplit("/", 1)[-1])
-                        if m:
-                            maxnum = max(maxnum, int(m.group(1)))
-                    nextnum = maxnum + 1
-                    for name, blob in entries:
-                        m = re.search(r"(\d+)", name.rsplit("/", 1)[-1])
-                        num = int(m.group(1)) if m else None
-                        if num is None:
-                            num = nextnum
-                            nextnum += 1
-                        if num in zip_map:
-                            continue           # keep the first
-                        zip_map[num] = blob
-                        src_items.append(ZipSlideImage(
-                            num, name.rsplit("/", 1)[-1], blob))
-                    src_items.sort(key=lambda z: z.num)
-                    st.caption(f"ZIP：{len(src_items)} 張圖片，"
-                               "檔名編號 = 投影片編號（按編號排序）。")
-        except Exception as exc:
-            st.caption(f"無法讀取 ZIP：{exc}")
-            src_items = []
-            src_kind = "none"
-    else:
-        src_fname = (getattr(ann_pptx, "name", "")
-                     if ann_pptx is not None else "")
-        saved_ann_path = saved_section_path("announcements", DATE)
-        cur_ann = (assemble_week(DATE).get("announcements") or [])
+    src_fname = (getattr(ann_pptx, "name", "")
+                 if ann_pptx is not None else "")
+    saved_ann_path = saved_section_path("announcements", DATE)
+    cur_ann = (assemble_week(DATE).get("announcements") or [])
+    if video_mp4 is None:
         if ann_pptx is not None:
             try:
                 src_pptx_bytes = ann_pptx.getvalue()
@@ -2030,17 +1997,22 @@ def render_video_panel(ns="", num="D",
                     st.caption(f"檔名未含日期（{src_fname}），使用目前日期 "
                                f"{DATE} 的內容。")
     st.session_state[K(f"video_snap{ns}")] = {
-        "kind": src_kind, "items": src_items, "zip_map": zip_map,
+        "kind": src_kind, "items": src_items, "zip_map": {},
         "pptx": src_pptx_bytes, "vdate": vdate, "ns": ns,
-        "nums_auto": ",".join(
-            str(getattr(z, "num", i + 1)) if src_kind == "zip" else str(i + 1)
-            for i, z in enumerate(src_items))}
-    if src_kind == "none":
-        st.caption("沒有可用的家事分享來源：請上載圖片、ZIP、家事分享 .pptx，"
+        "nums_auto": ",".join(str(i + 1) for i in range(len(src_items)))}
+    if video_mp4 is not None:
+        vid = video_mp4.getvalue()
+        st.session_state[K("video_data")] = vid
+        save_video_mp4(DATE, vid)
+        _video_result_tail(
+            ns, vid, f"announcements_{DATE}.mp4",
+            f"✅ 已採用你上載的 PowerPoint MP4（約 {len(vid) / 1048576:.1f} MB）。")
+    elif src_kind == "none":
+        st.caption("沒有可用的家事分享來源：請上載 PowerPoint 匯出的 MP4，"
                    "或在「✏️ 編輯內容 → 家事分享」輸入至少一項。")
         st.text_input("投影片編號", value="", disabled=True,
                       key=K(f"video_nums_off{ns}"),
-                      help="上載圖片／ppt 或輸入家事分享後即可產製")
+                      help="上載 MP4 或輸入家事分享內容後即可產製")
     else:
         v1, v2, v3 = st.columns(3)
         nums = v1.text_input(
@@ -2055,7 +2027,7 @@ def render_video_panel(ns="", num="D",
                      type="primary"):
             bar = st.progress(0.0, text="準備產製 MP4…")
             data, err = build_video_bytes(
-                src_kind, src_items, zip_map, src_pptx_bytes,
+                src_kind, src_items, {}, src_pptx_bytes,
                 nums, secs, fpsv, ann_images,
                 progress=lambda f: bar.progress(
                     f, text=f"產製 MP4… {f * 100:.0f}%"))
@@ -2071,19 +2043,9 @@ def render_video_panel(ns="", num="D",
                 save_video_mp4(DATE, data)
         vid = st.session_state.get(K("video_data")) or _saved_mp4_bytes(DATE)
         if vid:
-            st.download_button(
-                "⬇️ 下載 MP4", data=vid,
-                file_name=f"announcements_{vdate or DATE}.mp4",
-                mime="video/mp4", key=K(f"video_dl{ns}"))
-            st.caption(f"已產生影片（約 {len(vid) / 1048576:.1f} MB）。")
-            first_toggle = st.checkbox(
-                "把影片併入整場投影片的第一頁\n"
-                "（自動循環播放，直到點擊下一頁）",
-                value=True, key=K(f"video_first_deck{ns}"))
-            save_video_meta(DATE, bool(first_toggle))
-            if first_toggle:
-                st.caption("記得按左上「製成完整投影片」的按鈕，"
-                           "影片才會被放入第一頁。")
+            _video_result_tail(
+                ns, vid, f"announcements_{vdate or DATE}.mp4",
+                f"已產生影片（約 {len(vid) / 1048576:.1f} MB）。")
 
 
 EDIT_STEPS = [
