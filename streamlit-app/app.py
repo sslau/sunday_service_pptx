@@ -1308,11 +1308,19 @@ def _ly_stanza_editors(uid_kind, uid):
     if src is None:
         return
     n = max(len(src), 1)
+    st.caption(f"共 {n} 段 · 每段＝一張 slide，每行一句 · "
+               "▲▼ 調整次序，⧉ 複製，🗑 刪除")
     clicked = None
     for j in range(n):
         st.session_state.setdefault(
             K(f"{base}verses_{j}"), src[j] if j < len(src) else "")
-        up, dn, dup, rm, gap = st.columns([1, 1, 1, 1, 10])
+        body, up, dn, dup, rm = st.columns(
+            [9, 1, 1, 1, 1], vertical_alignment="center")
+        with body:
+            st.text_area(f"第 {j + 1} 段（每行一句）",
+                         value=sv(f"{base}verses_{j}",
+                                  src[j] if j < len(src) else ""),
+                         key=K(f"{base}verses_{j}"), height=90)
         if up.button("▲", key=K(f"{base}up_{j}"), help="這一段上移",
                      use_container_width=True, disabled=(j == 0)):
             clicked = ("move", j, -1)
@@ -1326,16 +1334,34 @@ def _ly_stanza_editors(uid_kind, uid):
         if rm.button("🗑", key=K(f"{base}rm_{j}"), help="刪除這一段",
                      use_container_width=True):
             clicked = ("drop", j)
-        gap.caption(f"共 {n} 段 · ▲▼ 調整次序，⧉ 複製，🗑 刪除")
-        st.text_area(f"第 {j + 1} 段（每行一句）",
-                     value=sv(f"{base}verses_{j}",
-                              src[j] if j < len(src) else ""),
-                     key=K(f"{base}verses_{j}"), height=90)
     # Act only after every text box has been rendered.  Calling `_ly_queue`
     # inside the loop would rerun mid-script, and Streamlit discards the state
     # of widgets a run never reached — the remaining 段 would come back empty.
     if clicked:
         _ly_queue(uid_kind, uid, *clicked)
+
+
+def _focus_hymn(uid, uids):
+    """Summary-card 「前往編輯」: open one song's expander and close the rest.
+
+    Runs as an `on_click` callback, i.e. before the next pass builds anything, so
+    writing the expanders' keys here is legal.  The expanders are keyed
+    (`hymn_exp_<uid>`) and pre-seeded, so the stored value wins over the default.
+    """
+    for u in uids:
+        st.session_state[K(f"hymn_exp_{u}")] = (u == uid)
+
+
+def _song_badge(uid, h):
+    """One-glance status for a song header / summary card: how many 段, or the
+    first thing still missing.  Reads the live widget values so it tracks typing."""
+    title = sv(f"hymn_{uid}_title", h.get("title", "")) or ""
+    vals = _ly_values("hymn", uid)
+    if not title.strip():
+        return "⚠ 未填曲名"
+    if not any(v.strip() for v in vals):
+        return "⚠ 沒有歌詞"
+    return f"{len(vals)} 段"
 
 
 def _insert_stanza(uid_kind, uid, text):
@@ -2303,10 +2329,44 @@ with tab_edit:
                      "標點符號以空格取代（如「，」「。」→ 空白）。"
                      "每首詩歌可用下方「背景圖」各自指定背景。")
 
-            for i, h in enumerate(_get_ui("hymns")):
+            hymns_ui = _get_ui("hymns")
+            hymn_uids = [h["_id"] for h in hymns_ui]
+            # Seed each song expander's open/closed state once, so the summary
+            # strip's 前往編輯 can drive it; the first song starts open.
+            for i, h in enumerate(hymns_ui):
+                st.session_state.setdefault(
+                    K(f"hymn_exp_{h['_id']}"), i == 0)
+            if hymns_ui:
+                st.markdown("**本週詩歌一覽**")
+                summary = st.columns(len(hymns_ui))
+                for i, h in enumerate(hymns_ui):
+                    uid = h["_id"]
+                    badge = _song_badge(uid, h)
+                    with summary[i], st.container(border=True):
+                        st.markdown(
+                            "<div style='font-size:.72rem;color:var(--muted);"
+                            "letter-spacing:.05em'>詩歌 %d</div>"
+                            "<div style='font-weight:700;margin:.1rem 0'>%s</div>"
+                            % (i + 1,
+                               html.escape(_song_title(uid, h) or "（未命名）")),
+                            unsafe_allow_html=True)
+                        if badge.startswith("⚠"):
+                            st.markdown(
+                                "<div style='color:#B45309;font-size:.82rem'>"
+                                f"{badge}</div>", unsafe_allow_html=True)
+                        else:
+                            st.caption(badge)
+                        st.button("前往編輯", key=K(f"hymn_goto_{uid}"),
+                                  use_container_width=True,
+                                  on_click=_focus_hymn,
+                                  args=(uid, hymn_uids))
+
+            for i, h in enumerate(hymns_ui):
                 uid = h["_id"]
-                with st.expander(f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}",
-                                 expanded=(i == 0)):
+                badge = _song_badge(uid, h)
+                head = (f"詩歌 {i + 1} · {_song_title(uid, h) or '（未命名）'}"
+                        + (f" · {badge}" if badge else ""))
+                with st.expander(head, key=K(f"hymn_exp_{uid}")):
                     _lyric_search_panel("hymn", uid)
                     st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
                                  value=sv(f"hymn_{uid}_paste", ""),
@@ -2339,36 +2399,39 @@ with tab_edit:
                                   value=sv(f"hymn_{uid}_lyricist",
                                            h.get("lyricist")),
                                   key=K(f"hymn_{uid}_lyricist"))
-                    _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
+                    with st.expander("🎨 背景圖"):
+                        _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
                     _ly_stanza_editors("hymn", uid)
-                    st.divider()
-                    pcol1, pcol2 = st.columns([0.42, 0.58])
-                    if pcol1.button("🎬 產生這首詩歌的 slide",
-                                    key=K(f"hymn_{uid}_preview_gen"),
-                                    use_container_width=True):
-                        try:
-                            data, cnt = build_hymn_pptx_bytes(
-                                assemble_week(DATE), assemble_hymn(DATE, h))
-                            st.session_state[K(f"hymn_{uid}_preview_data")] = data
-                            st.session_state[K(f"hymn_{uid}_preview_count")] = cnt
-                            st.session_state[K(f"hymn_{uid}_preview_html")] = \
-                                _hymn_preview_html(hymn_preview(data))
-                        except Exception as exc:
-                            st.error(f"產生失敗：{exc}")
-                    if pcol2.button("🗑 清除預覽",
-                                    key=K(f"hymn_{uid}_preview_clear"),
-                                    use_container_width=True,
-                                    disabled=not st.session_state.get(
-                                        K(f"hymn_{uid}_preview_data"))):
-                        for kk in ("_preview_data", "_preview_count",
-                                   "_preview_html"):
-                            st.session_state.pop(K(f"hymn_{uid}{kk}"), None)
-                        st.rerun()
-                    _render_hymn_preview(uid, h.get("title", ""))
-                    c1, c2 = st.columns(2)
-                    if c1.button("＋ 新增一段", key=K(f"hymn_{uid}_addstanza")):
+                    if st.button("＋ 新增一段", key=K(f"hymn_{uid}_addstanza")):
                         _ly_add_stanza("hymn", uid)
-                    if c2.button("移除這首詩歌", key=K(f"hymn_{uid}_del")):
+                    st.divider()
+                    with st.expander("▶ 預覽這首詩歌的 slides"):
+                        pcol1, pcol2 = st.columns([0.42, 0.58])
+                        if pcol1.button("🎬 產生這首詩歌的 slide",
+                                        key=K(f"hymn_{uid}_preview_gen"),
+                                        use_container_width=True):
+                            try:
+                                data, cnt = build_hymn_pptx_bytes(
+                                    assemble_week(DATE), assemble_hymn(DATE, h))
+                                st.session_state[K(f"hymn_{uid}_preview_data")] = data
+                                st.session_state[K(f"hymn_{uid}_preview_count")] = cnt
+                                st.session_state[K(f"hymn_{uid}_preview_html")] = \
+                                    _hymn_preview_html(hymn_preview(data))
+                            except Exception as exc:
+                                st.error(f"產生失敗：{exc}")
+                        if pcol2.button("🗑 清除預覽",
+                                        key=K(f"hymn_{uid}_preview_clear"),
+                                        use_container_width=True,
+                                        disabled=not st.session_state.get(
+                                            K(f"hymn_{uid}_preview_data"))):
+                            for kk in ("_preview_data", "_preview_count",
+                                       "_preview_html"):
+                                st.session_state.pop(K(f"hymn_{uid}{kk}"), None)
+                            st.rerun()
+                        _render_hymn_preview(uid, h.get("title", ""))
+                    st.divider()
+                    if st.columns([1, 2])[0].button(
+                            "🗑 移除這首詩歌", key=K(f"hymn_{uid}_del")):
                         st.session_state[K("del_hymn_pending")] = i
                         st.rerun()
             if st.session_state.get(K("del_hymn_pending")) is not None:
@@ -2449,7 +2512,8 @@ with tab_edit:
             m2.text_input("曲", value=sv("resp_music"), key=K("resp_music"))
             m3.text_input("詞", value=sv("resp_lyricist"),
                           key=K("resp_lyricist"))
-            _bg_picker("resp_bg", "")
+            with st.expander("🎨 背景圖"):
+                _bg_picker("resp_bg", "")
             _ly_stanza_editors("resp", "")
             if st.button("＋ 新增一段", key=K("resp_add")):
                 _ly_add_stanza("resp", "")
