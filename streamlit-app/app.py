@@ -1343,22 +1343,41 @@ def _insert_stanza(uid_kind, uid, text):
     _ly_queue(uid_kind, uid, "insert", text)
 
 
-def _ly_fill_paste(uid_kind, uid, text, n_seg):
+_TITLE_FIELDS = (("title", "曲名"), ("subtitle", "英文名"), ("source", "詩集"),
+                 ("music", "曲"), ("lyricist", "詞"))
+
+
+def _ly_fill_paste(uid_kind, uid, text, n_seg, info=None):
     """Drop a library song into the 貼上整首詩歌 box rather than straight into the
     段 fields, so the whole song can be edited in one place and split afterwards
-    with 匯入為各段.
+    with 匯入為各段.  ``info`` (a title card read from the library song) fills the
+    曲名/英文名/詩集/曲/詞 boxes below; empty fields are left as they were.
 
-    No `st.rerun()` on purpose: the search panel sits above the paste box, so the
-    box renders later in this same pass and picks the value up on the way down.
+    No `st.rerun()` on purpose: the search panel sits above the paste box and the
+    metadata boxes, so they render later in this same pass and pick the values up
+    on the way down.
     """
-    st.session_state[K(_ly_base(uid_kind, uid) + "paste")] = text
-    st.success(f"已貼上 {n_seg} 段到「貼上整首詩歌」—"
-               "可直接在上方整首編輯，再按「匯入為各段」切成各段。")
+    base = _ly_base(uid_kind, uid)
+    st.session_state[K(base + "paste")] = text
+    filled = []
+    for field, label in _TITLE_FIELDS:
+        val = (info or {}).get(field, "")
+        if val:
+            st.session_state[K(base + field)] = val
+            filled.append(label)
+    msg = (f"已貼上 {n_seg} 段到「貼上整首詩歌」—"
+           "可直接在上方整首編輯，再按「匯入為各段」切成各段。")
+    if info:
+        msg += "第一頁是標題卡，用來填寫欄位，不計入段數。"
+    if filled:
+        msg += "已填寫：" + "、".join(filled) + "。"
+    st.success(msg)
 
 
-# Whole-song import keeps every page: one page becomes one 段.  Nothing is
-# dropped (no title-card skip, no repeat collapsing), so the count in the
-# 「匯入整首詩歌（N 段）」 button is the song's page count.
+# Whole-song import keeps every page but the title card: slide 1 fills the
+# metadata boxes (and is skipped, since the deck builds its own title slide),
+# and every other page becomes one 段.  So a source deck that re-slides its
+# chorus after every verse keeps those pages.
 
 
 def _lyric_open(flag_key):
@@ -1456,18 +1475,19 @@ def _lyric_search_panel(uid_kind, uid):
             page_no = nos[ppick]
         else:
             page_no = nos[0]
-        # Nothing is dropped: one page becomes one 段, so the count in the
-        # button matches the song's page count.  A source deck that re-slides
-        # its chorus after every verse keeps those pages as their own 段.
-        n_seg = len(lib.segments(hit.key))
+        # 匯入整首詩歌: the title card (slide 1, when there is one) fills the
+        # metadata boxes and is left out of the 段, because the deck builds its
+        # own title slide from those fields.  Every other page becomes one 段, so
+        # a source deck that re-slides its chorus after every verse keeps them.
+        info, text, n_seg = lib.import_song(hit.key)
         b1, b2, b3 = st.columns([1.5, 1, 1])
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
-                     help="把全部頁的歌詞貼進「貼上整首詩歌」，"
+                     help="把各頁歌詞貼進「貼上整首詩歌」；第一頁標題卡用來填寫"
+                          "曲名／英文名／詩集／曲／詞，不計入段數。"
                           "不會直接改動下面的各段。"):
-            text, n = lib.paste_text(hit.key)
-            _ly_fill_paste(uid_kind, uid, text, n)
+            _ly_fill_paste(uid_kind, uid, text, n_seg, info)
         if b2.button(f"⬇️ 只匯入第 {page_no} 頁", key=K(f"{base}lyone"),
                      use_container_width=True,
                      help="跳過貼上框，直接在下面加一段。"):

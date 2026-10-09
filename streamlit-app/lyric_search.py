@@ -61,6 +61,23 @@ _BOOK_RE = re.compile(r"(聖詩|輔助本|美樂頌|Hymn|Sup)\s*\d", re.I)
 _LEAD_NO_RE = re.compile(r"^\s*\d+\s*")
 _TRAIL_ED_RE = re.compile(r"[（(][A-Za-z0-9][)）]\s*$")
 
+# Title-card credits: "曲：X", "詞：Y", "詞曲：Z", "粵語譯詞：W", "Music By: V".
+# Longest label first so 曲/詞 do not win over 詞曲/原曲詞.
+_CREDIT_LABELS = (
+    "粵語譯詞", "中文翻譯", "中文歌詞", "原曲詞", "詞曲", "曲詞", "曲/詞", "曲／詞",
+    "詞/曲", "詞／曲", "作曲", "作詞", "粵詞", "譯詞", "中譯", "Music By",
+    "Words by", "Words", "Composer", "Lyricist", "Lyrics", "Music", "曲", "詞", "譯",
+)
+_CREDIT_RE = re.compile(
+    r"(?P<lab>%s)\s*[:：]"
+    % "|".join(re.escape(x) for x in sorted(_CREDIT_LABELS, key=len, reverse=True)),
+    re.I)
+_CJK_RE = re.compile(r"[\u3400-\u9fff]")
+_LATIN_RE = re.compile(r"[A-Za-z]")
+# Lines that never name the album: bracketed markers, codes, copyright, junk.
+_NOISE_RE = re.compile(r"^[（(].*[)）]$|ccli|copyright|版權|©|^\d+$|^[#\W]+$",
+                       re.I)
+
 
 def norm(s):
     """Casefolded text with whitespace and punctuation removed."""
@@ -127,6 +144,103 @@ def first_copy(pages, name):
         if len(s) <= len(ref) + 1 and len(s & ref) >= len(ref) - 1:
             return pages[:i]
     return pages
+
+
+def _credit_kind(label):
+    """(composer?, lyricist?) named by one 曲/詞 style credit label."""
+    music = "曲" in label or bool(re.search(r"music|composer|tune", label, re.I))
+    lyric = ("詞" in label or "譯" in label
+             or bool(re.search(r"words|lyric", label, re.I)))
+    return music, lyric
+
+
+def _title_match(cands, want):
+    """The candidate line matching the song's display name, else the first.
+
+    ``want`` is the normalised display name; the title card can put the album or
+    publisher ahead of the title (``普天頌讚 / 高唱主名歌``), so the name picks
+    the real title instead of blindly taking the first Chinese line.
+    """
+    if want:
+        scored = []
+        for cand in cands:
+            n = norm(_variant(cand))
+            if not n:
+                continue
+            if n == want:
+                scored.append((2, len(n), cand))
+            elif want in n or n in want:
+                scored.append((1, min(len(n), len(want)), cand))
+        if scored:
+            return max(scored)[2]
+    return cands[0] if cands else ""
+
+
+def parse_title_card(pages, name):
+    """Fields read from a song's title card — ``{}`` when slide 1 is not one.
+
+    Returns ``{"title", "subtitle", "source", "music", "lyricist"}`` (each a
+    string, possibly empty) for the editor's 曲名/英文名/詩集/曲/詞 boxes.  ``name``
+    is the display name, used to tell the title from the album when the card puts
+    the album first.
+    """
+    if not pages or not _is_title_card(pages, name):
+        return {}
+    lines = _lines(pages[0][1])
+    music, lyric, rest, i = [], [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        found = list(_CREDIT_RE.finditer(line))
+        if not found:
+            rest.append(line)
+            i += 1
+            continue
+        for j, m in enumerate(found):
+            end = found[j + 1].start() if j + 1 < len(found) else len(line)
+            val = line[m.end():end].strip(" \t:：，,、/／.-")
+            if not val:                 # "詞曲：" with names on the next line(s)
+                grabbed, k = [], i + 1
+                while (k < len(lines) and len(grabbed) < 2
+                       and _LATIN_RE.search(lines[k])
+                       and not _CREDIT_RE.search(lines[k])
+                       and not _BOOK_RE.search(lines[k])
+                       and not _CJK_RE.search(lines[k])):
+                    grabbed.append(lines[k].strip())
+                    lines[k] = ""
+                    k += 1
+                val = " ".join(grabbed)
+            if val:
+                is_music, is_lyric = _credit_kind(m.group("lab"))
+                if is_music:
+                    music.append(val)
+                if is_lyric:
+                    lyric.append(val)
+        i += 1
+
+    rest = [x for x in rest if x.strip()]
+    want = norm(_variant(_song_title(name)))
+    cjk = [x for x in rest if _CJK_RE.search(x) and not _BOOK_RE.search(x)]
+    latin = [x for x in rest if _LATIN_RE.search(x) and not _CJK_RE.search(x)
+             and not _BOOK_RE.search(x)]
+    title = _title_match(cjk, want) or _title_match(latin, want)
+    subtitle = next((x for x in latin if x != title), "")
+    source = next((x for x in rest if _BOOK_RE.search(x)), "")
+    if not source:
+        for line in rest:
+            m = re.search(r"(?:詩集|專輯|專輯名稱)\s*[:：]\s*(.+)", line)
+            if m:
+                source = m.group(1).strip()
+                break
+    if not source:
+        for line in rest:
+            if line in (title, subtitle) or _BOOK_RE.search(line):
+                continue
+            if _NOISE_RE.search(line):
+                continue
+            source = line
+            break
+    return {"title": title, "subtitle": subtitle, "source": source,
+            "music": "；".join(music), "lyricist": "；".join(lyric)}
 
 
 def tidy(text):
@@ -323,6 +437,22 @@ class LyricLibrary:
         protocol ``app._parse_hymn_paste()`` splits into 段.  One page per 段."""
         segs = self.segments(key)
         return "\n\n".join(t for _, t in segs), len(segs)
+
+    def import_song(self, key):
+        """(info, text, n) prepared for a whole-song import.
+
+        ``info`` is the title-card metadata read from slide 1 (empty when slide 1
+        is not a title card).  A recognised title card is left out of the returned
+        text, because the deck builds its own title slide from ``info``; importing
+        it too would print two.  Every remaining page stays its own 段.
+        """
+        resolved = key if key in self.songs else (self._find(key) or "")
+        segs = self.segments(resolved)
+        name = self.meta.get(resolved, ("", ""))[0]
+        info = parse_title_card(segs, name)
+        if info:
+            segs = segs[1:]
+        return info, "\n\n".join(t for _no, t in segs), len(segs)
 
 
 def _scan():
