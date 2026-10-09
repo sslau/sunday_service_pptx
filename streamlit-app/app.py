@@ -1664,6 +1664,29 @@ _CSS = """
   border-radius:10px !important; }
 [data-testid="stAlert"] { border-radius:10px; }
 [data-testid="stExpander"] { border-radius:12px; border:1px solid var(--line); }
+
+/* 詩歌 N (and any) panel header that nests further expanders: an obvious,
+   thick-outlined button.  DOM: div[data-testid="stExpander"] > details >
+   summary (stExpanderDetails marks the *content* box).  `:has` scopes this to
+   exactly those headers — the 歌詞庫搜尋/背景圖/預覽 expanders inside them and
+   the OneDrive panel don't nest expanders, so they keep the plain look. */
+div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
+  > details > summary {
+  background: var(--accent-soft);
+  border: 2px solid var(--accent) !important;
+  border-radius: 10px;
+  margin: .3rem;
+  padding: .5rem .9rem !important;
+  font-weight: 700;
+}
+div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
+  > details[open] > summary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent-2) !important;
+}
+div[data-testid="stExpander"]:has(div[data-testid="stExpander"])
+  > details[open] > summary [data-testid="stExpanderIcon"] { color: #fff; }
 .stTabs [data-baseweb="tab-list"] { gap:.35rem; }
 .stTabs [data-baseweb="tab"] {
   border-radius:8px 8px 0 0; padding:.5rem 1rem; font-weight:600; }
