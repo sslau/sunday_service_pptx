@@ -1367,7 +1367,7 @@ def _lyric_search_panel(uid_kind, uid):
         books = sorted({w for _n, w in lib.meta.values()})
         st.caption(f"{len(lib)} 首詩歌／{lib.total_slides} 頁，來自 "
                    f"{'、'.join(books)}。"
-                   "空格分開多個詞＝同一頁要全部命中；忽略標點與空格，"
+                   "空格分開多個詞＝同一頁要全部找到；忽略標點與空格，"
                    "所以跨行、跨頁的句子也找得到。")
         q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
                           placeholder="例如 中國啊　或　讓我們 愛")
@@ -1379,7 +1379,7 @@ def _lyric_search_panel(uid_kind, uid):
             st.info("找不到符合的歌詞。試試少一點字，或只用其中一個詞。")
             return
         n_pages = sum(len(s.nos) for s in songs)
-        cap = (f"{len(songs)} 首詩歌（{n_pages} 頁命中）。"
+        cap = (f"{len(songs)} 首詩歌（找到 {n_pages} 頁）。"
                if len(songs) < lyric_search.MAX_HITS
                else f"超過 {lyric_search.MAX_HITS} 首詩歌，只顯示前面 "
                     f"{lyric_search.MAX_HITS} 首——請加詞收窄。")
@@ -1392,11 +1392,11 @@ def _lyric_search_panel(uid_kind, uid):
                     return lyric_search.snippet(text, q)
             return ""
 
-        # 曲名 · 詩集 · 命中頁數 — the book disambiguates two same-named hymns,
+        # 曲名 · 詩集 · 找到頁數 — the book disambiguates two same-named hymns,
         # and the snippet shows why the row matched.
         labels = []
         for s in songs:
-            why = ("命中 %d 頁" % len(s.nos)) if s.nos else "曲名命中"
+            why = ("找到 %d 頁" % len(s.nos)) if s.nos else "找到曲名"
             labels.append("%s · %s · %s — %s"
                           % (s.name, s.where, why, _snippet_of(s)))
         pick = st.selectbox("結果", options=list(range(len(songs))),
