@@ -10,10 +10,11 @@ looping GIF for the user manual:
     5. ⬇️ 匯入整首詩歌 — lyrics + metadata land in the editor
     6. 🎨 背景圖 — pick a background thumbnail
     7. ▶ 預覽這首詩歌的 slides → 🎬 產生這首詩歌的 slide
+    8. download that hymn's .pptx and rasterize every slide (the finished deck)
 
     # start the app first, then:
     python make_ui_hymn_demo_gif.py
-    python make_ui_hymn_demo_gif.py --term "讓我們 愛" --width 1100
+    python make_ui_hymn_demo_gif.py --term "讓我們 愛" --width 1100 --seconds 3
 
 Needs the `playwright` package and Google Chrome (channel="chrome"); no browser
 download required — only `python -m pip install playwright`.
@@ -51,7 +52,29 @@ def click(page, text, nth=0):
 
 def grab(page, shots, tag):
     page.wait_for_timeout(600)
-    shots.append((tag, page.screenshot()))
+    shots.append((tag, Image.open(BytesIO(page.screenshot())).convert("RGB")))
+
+
+def download_slides(page, args):
+    """Click the hymn download button, then rasterize the .pptx it returns."""
+    loc = page.locator('button:has-text("%s")' % args.dl_label).first
+    if not loc.count():
+        print("no download button; skipping slide frames")
+        return []
+    loc.scroll_into_view_if_needed()
+    with page.expect_download(timeout=args.timeout) as dl_info:
+        loc.click()
+    path = dl_info.value.path()
+    with open(path, "rb") as fh:
+        data = fh.read()
+    from pptx import Presentation
+
+    from video_deck import render_pptx_slide
+
+    count = len(Presentation(BytesIO(data)).slides)
+    count = min(count, args.max_slides)
+    print("hymn pptx: %d KB, %d slides" % (len(data) // 1024, count))
+    return [render_pptx_slide(data, i, args.width) for i in range(count)]
 
 
 def capture(page, args):
@@ -87,11 +110,9 @@ def capture(page, args):
     expand(page, "背景圖")
     bg = page.locator('details:has(summary:has-text("背景圖"))').first
     cbs = bg.locator('[data-testid="stCheckbox"]')
-    print("bg checkboxes: %d" % cbs.count())
     if cbs.count() > args.bg_index:
-        cbx = cbs.nth(args.bg_index)
-        cbx.scroll_into_view_if_needed()
-        cbx.click()
+        cbs.nth(args.bg_index).scroll_into_view_if_needed()
+        cbs.nth(args.bg_index).click()
         page.wait_for_timeout(2500)
     grab(page, shots, "background")
 
@@ -100,19 +121,31 @@ def capture(page, args):
         page.wait_for_timeout(6000)
     page.locator('summary:has-text("預覽這首詩歌的 slide")').first.scroll_into_view_if_needed()
     grab(page, shots, "preview")
+
+    for i, img in enumerate(download_slides(page, args), 1):
+        shots.append(("slide-%d" % i, img))
     return shots
 
 
-def write_gif(shots, path, width, seconds, colors):
-    pals = []
-    for _tag, b in shots:
-        f = Image.open(BytesIO(b)).convert("RGB")
-        h = round(f.height * width / f.width)
-        pals.append(f.resize((width, h)).quantize(colors=colors,
-                                                  method=Image.MEDIANCUT))
-    ms = int(round(seconds * 1000))
-    pals[0].save(path, save_all=True, append_images=pals[1:], duration=ms,
-                 loop=0, optimize=True, disposal=2)
+def fit(img, size, bg=(255, 255, 255)):
+    """Scale `img` to `size[0]` wide and centre it on a canvas of `size`."""
+    if img.size == size:
+        return img
+    h = max(1, round(img.height * size[0] / img.width))
+    canvas = Image.new("RGB", size, bg)
+    canvas.paste(img.resize((size[0], h)), (0, max(0, (size[1] - h) // 2)))
+    return canvas
+
+
+def write_gif(frames, path, width, seconds, colors):
+    """Downscale every frame to `width`, pad to a common size, write a GIF."""
+    first = frames[0][1]
+    size = (width, round(first.height * width / first.width))
+    pals = [fit(img, size).quantize(colors=colors, method=Image.MEDIANCUT)
+            for _tag, img in frames]
+    pals[0].save(path, save_all=True, append_images=pals[1:],
+                 duration=int(round(seconds * 1000)), loop=0,
+                 optimize=True, disposal=2)
 
 
 def main():
@@ -122,12 +155,15 @@ def main():
     parser.add_argument("--out", default="user_guide_assets/section_hymns.gif")
     parser.add_argument("--term", default="中國啊", help="lyric search term")
     parser.add_argument("--search-label", default="搜尋歌詞")
-    parser.add_argument("--bg-label", default="選用")
     parser.add_argument("--bg-index", type=int, default=1,
                         help="which background thumbnail to pick (default 1)")
+    parser.add_argument("--dl-label", default="下載這首詩歌的 pptx",
+                        help="download button whose .pptx becomes the slides")
+    parser.add_argument("--max-slides", type=int, default=8,
+                        help="cap the rasterized deck frames (default 8)")
     parser.add_argument("--width", type=int, default=1000)
-    parser.add_argument("--seconds", type=float, default=1.6,
-                        help="seconds per frame (default 1.6)")
+    parser.add_argument("--seconds", type=float, default=3.0,
+                        help="seconds per frame (default 3)")
     parser.add_argument("--colors", type=int, default=128)
     parser.add_argument("--view-width", type=int, default=1440)
     parser.add_argument("--view-height", type=int, default=900)

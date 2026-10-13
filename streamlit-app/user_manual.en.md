@@ -79,10 +79,12 @@ buttons at the top let you jump around in **any order**; below are "⬅ 上一�
 **global typeface** (DFKai-SB / PMingLiU / JhengHei / DengXian / LiSu), applied
 to all slide text.
 
-> Each section below includes an **app-interface demo (GIF)** showing that
-> step's actual screen in the app (the Hymns one walks the whole workflow:
-> lyric search → whole song → import → background → slide preview), looping
-> forever. Regenerate with `make_ui_section_gifs.py` / `make_ui_hymn_demo_gif.py`.
+> Each section below includes an **app-interface demo (GIF)**, looping forever.
+> Hymns and Scripture show the full workflow: Hymns — lyric search → import →
+> background → generate & download the deck; Scripture — enter a book/verse →
+> load from fhl.net → generate and download the scripture deck. Regenerate with
+> `make_ui_section_gifs.py` / `make_ui_hymn_demo_gif.py` /
+> `make_ui_scripture_demo_gif.py`.
 
 ### Step 1 · Call to Worship (宣召經文)
 
@@ -118,7 +120,7 @@ to all slide text.
 ![Hymns UI demo](user_guide_assets/section_hymns.gif)
 
 > Demo flow: search "中國啊" → open the whole song → import it → pick a
-> background → generate that hymn's slide preview.
+> background → generate that hymn's slide preview → download & view the deck.
 
 Each hymn keeps its lyrics in **one editor box**, shown right inside the card.
 What you type is what lands on the slides: **a blank line separates slides; each
@@ -172,6 +174,9 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 ### Step 4 · Scripture Reading (讀經經文)
 
 ![Scripture reading UI demo](user_guide_assets/section_scripture.gif)
+
+> Demo (in the standalone 經文投影片 flow): pick 詩篇 → type 詩篇 34:1-10 →
+> load from fhl.net → 📜 製成經文投影片 pptx → ⬇️ download the scripture deck.
 
 - Identical controls to the Call to Worship (book dropdown, translation, fhl.net
   fetch, fonts, paragraph/list layout, auto-splitting); the reading is just
