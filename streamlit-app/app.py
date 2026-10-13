@@ -10,6 +10,8 @@ Deploy: push this folder to GitHub → Streamlit Community Cloud (see README).
 Data lives in Google Sheets so Community Cloud's ephemeral disk is never
 relied on.
 """
+import difflib
+import hashlib
 import io
 import os
 import re
@@ -26,6 +28,8 @@ import bible  # noqa: E402
 import login_log  # noqa: E402
 import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
+from generate_deck import (IMAGE_SLIDES,  # noqa: E402
+                           READING_BG, SERMON_GOLD, _DIVIDER_TITLES)
 from deck_builder import (build_deck,  # noqa: E402
                           build_section_pptx_bytes, clear_section_deck,
                           build_hymn_pptx_bytes, hymn_preview,
@@ -785,7 +789,7 @@ def _seed_values(week, date):
         "psalm_font_size": psalm.get("font_size", 44),
         "psalm_layout": psalm.get("layout", READING_LAYOUT_DEFAULT),
         "psalm_verses": "\n".join(psalm.get("verses") or []),
-        "hymn_font_max": week.get("hymn_font_max", 48),
+        "hymn_font_max": week.get("hymn_font_max", 52),
         "hymn_font_min": week.get("hymn_font_min", 48),
         "hymn_margin_in": week.get("hymn_margin_in", 0.83),
         "hymn_text_shadow": bool(week.get("hymn_text_shadow", True)),
@@ -887,8 +891,7 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
         _lapse(base + "repeat", draft,
                bool(sw.get("refrain_after_every_verse", True)))
-        for j, stanza in enumerate(sw.get("verses", [])):
-            _lapse(f"{base}verses_{j}", draft, "\n".join(stanza))
+        _lapse(base + "paste", draft, _stanzas_to_text(sw.get("verses", [])))
     slides = (week.get("sermon") or {}).get("slides") or []
     for i, s in enumerate(st.session_state.get(f"{date}::ui_slides") or []):
         sw = slides[i] if i < len(slides) else {}
@@ -896,21 +899,45 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "title", draft, sw.get("title", ""))
         _lapse(base + "body", draft, "\n".join(sw.get("body") or []))
     rverses = (week.get("response") or {}).get("verses") or []
-    ui_r = st.session_state.get(f"{date}::ui_resp") or []
-    for j in range(max(len(ui_r), len(rverses), 1)):
-        _lapse(f"{date}::resp_verses_{j}", draft,
-               "\n".join(rverses[j]) if j < len(rverses) else "")
+    _lapse(f"{date}::resp_paste", draft, _stanzas_to_text(rverses))
+
+
+def _slide_blocks(text):
+    """Editor text -> 段 (slide) blocks: one blank line separates slides.
+
+    The box is the single lyric editor, so this split is applied live — the
+    same protocol the old 匯入為各段 enforced, minus the chorus detection which
+    is no longer part of the UI.  Blank blocks are dropped; an empty or
+    whitespace-only box yields one empty block.
+    """
+    blocks, cur = [], []
+    for ln in (text or "").split("\n"):
+        if ln.strip():
+            cur.append(ln.rstrip())
+        elif cur:
+            blocks.append("\n".join(cur))
+            cur = []
+    if cur:
+        blocks.append("\n".join(cur))
+    return blocks or [""]
+
+
+def _stanzas_to_text(stanzas):
+    """Stored 段 list (list of line-lists) -> the editor's blank-line separated
+    text, so the box and the stored week round-trip without loss."""
+    filled = ["\n".join(s) for s in (stanzas or [])
+              if s and any((ln or "").strip() for ln in s)]
+    return "\n\n".join(filled)
 
 
 def _seed_response_fields(date, week):
-    """Seed the 詩歌回應 stanza list and per-stanza widget keys."""
+    """Seed the 詩歌回應 lyric editor from the stored week."""
     response = week.get("response") or {}
     verses = ["\n".join(v) for v in (response.get("verses") or [])] or [""]
     st.session_state[f"{date}::ui_resp"] = verses
-    for j in range(max(len(verses), 20)):
-        st.session_state.setdefault(
-            f"{date}::resp_verses_{j}",
-            verses[j] if j < len(verses) else "")
+    st.session_state.setdefault(
+        f"{date}::resp_paste",
+        _stanzas_to_text(response.get("verses") or []))
 
 
 @st.cache_data(show_spinner=False, max_entries=64)
@@ -940,8 +967,8 @@ if f"{DATE}::ui_hymns" not in st.session_state:
         st.session_state[base + "bg"] = h.get("bg", "")
         st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
-        for j, stanza in enumerate(h.get("stanzas", [])):
-            st.session_state[f"{base}verses_{j}"] = stanza
+        st.session_state[base + "paste"] = _stanzas_to_text(
+            h.get("stanzas", []))
 
 _restore_lapsed_fields(DATE, week)
 
@@ -1034,12 +1061,11 @@ def assemble_week(date):
     ui_ann = st.session_state.get(f"{date}::ui_ann", [])
     ui_resp = st.session_state.get(f"{date}::ui_resp", [""])
 
-    resp_verses = []
-    for j in range(max(len(ui_resp), 1)):
-        lines = split_lines(st.session_state.get(
-            f"{date}::resp_verses_{j}", ""))
-        if lines:
-            resp_verses.append(lines)
+    resp_paste = st.session_state.get(f"{date}::resp_paste")
+    if resp_paste is None:
+        resp_verses = [split_lines(v) for v in ui_resp if v and v.strip()]
+    else:
+        resp_verses = [split_lines(b) for b in _slide_blocks(resp_paste)]
 
     week = {
         "date": date,
@@ -1051,7 +1077,7 @@ def assemble_week(date):
                           or READING_LAYOUT_DEFAULT),
             "verses": split_lines(gv("psalm_verses", "")),
         },
-        "hymn_font_max": int(gv("hymn_font_max", 48)),
+        "hymn_font_max": int(gv("hymn_font_max", 52)),
         "hymn_font_min": int(gv("hymn_font_min", 48)),
         "hymn_margin_in": float(gv("hymn_margin_in", 0.83)),
         "hymn_text_shadow": bool(gv("hymn_text_shadow", True)),
@@ -1100,8 +1126,9 @@ def assemble_week(date):
 
 def assemble_hymn(date, ui):
     base = f"{date}::hymn_{ui['_id']}_"
-    stanza_txt = [st.session_state.get(f"{base}verses_{j}", ui["stanzas"][j])
-                  for j in range(max(len(ui.get("stanzas", ["", ])), 1))]
+    paste = st.session_state.get(base + "paste")
+    if paste is None:
+        paste = _stanzas_to_text(ui.get("stanzas", []))
     return {
         "title": st.session_state.get(base + "title", ui.get("title", "")),
         "subtitle": st.session_state.get(base + "subtitle", ui.get("subtitle", "")),
@@ -1112,7 +1139,7 @@ def assemble_hymn(date, ui):
         "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
         "refrain": None,
         "refrain_after_every_verse": False,
-        "verses": [split_lines(t) for t in stanza_txt],
+        "verses": [split_lines(b) for b in _slide_blocks(paste)],
     }
 
 
@@ -1194,194 +1221,9 @@ def _parse_hymn_paste(text, with_chorus=True):
     return ["\n".join(b) for b in blocks], "", True
 
 
-def _apply_parsed(uid_kind, uid, text, with_chorus=True):
-    """Run _parse_hymn_paste and write the result into the session widget keys.
-
-    uid_kind: 'hymn' (per-song uid) or 'resp' (single response hymn).
-    uid: hymn `_id` or "" for the response section."""
-    stanzas, refrain, repeat = _parse_hymn_paste(text, with_chorus=with_chorus)
-    if uid_kind == "hymn":
-        base = f"hymn_{uid}_"
-        ui = _get_ui("hymns")
-        h = next((x for x in ui if x.get("_id") == uid), None)
-        if h is not None:
-            h["stanzas"] = stanzas
-            h["refrain"] = refrain
-            h["repeat"] = repeat
-    else:
-        base = "resp_"
-        ui = _get_ui("resp")
-        ui[:] = stanzas
-    for j in range(max(len(stanzas), 1)):
-        st.session_state[K(f"{base}verses_{j}")] = stanzas[j]
-    st.session_state[K(f"{base}refrain")] = refrain
-    st.session_state[K(f"{base}repeat")] = repeat
-    st.session_state[K(f"{base}chorus_applied")] = with_chorus
-    st.rerun()
-
-
-
-def _maybe_reapply_chorus(uid_kind, uid):
-    """If the 副歌辨識正確 checkbox now disagrees with the last applied parse,
-    re-run _apply_parsed with the new setting so each paragraph becomes its
-    own slide (with_chorus=False) or the chorus grouping comes back on."""
-    base = f"hymn_{uid}_" if uid_kind == "hymn" else "resp_"
-    cur = st.session_state.get(K(f"{base}chorus_ok"))
-    applied = st.session_state.get(K(f"{base}chorus_applied"))
-    paste = st.session_state.get(K(f"{base}paste"), "")
-    if cur is not None and applied is not None and cur != applied and paste.strip():
-        _apply_parsed(uid_kind, uid, paste, with_chorus=cur)
-
-
 def _ly_base(uid_kind, uid):
     """Widget-key prefix for a song editor: per-song uid, or the shared 詩歌回應."""
     return f"hymn_{uid}_" if uid_kind == "hymn" else "resp_"
-
-
-def _ly_stanzas(uid_kind, uid):
-    """The live 段 list behind a song editor.
-
-    A hymn stores its stanzas in the dict `_get_ui("hymns")` hands back, while
-    詩歌回應 keeps a bare list in session state, so both are reached through here.
-    Returned by reference: callers mutate it in place.
-    """
-    if uid_kind == "hymn":
-        h = next((x for x in _get_ui("hymns")
-                  if x.get("_id") == uid), None)
-        return None if h is None else h.setdefault("stanzas", [""])
-    return st.session_state.setdefault(f"{DATE}::ui_resp", [""])
-
-
-def _ly_values(uid_kind, uid):
-    """段 text as edited right now — the live widget values win over the stored
-    list, so a move or delete cannot silently drop an unsaved edit."""
-    base = _ly_base(uid_kind, uid)
-    src = _ly_stanzas(uid_kind, uid)
-    if src is None:
-        return []
-    return [st.session_state.get(K(f"{base}verses_{j}"),
-                                 src[j] if j < len(src) else "")
-            for j in range(max(len(src), 1))]
-
-
-def _ly_commit(uid_kind, uid, values):
-    """Write 段 text to both the session widgets and the stored list.
-
-    Both are needed: the widgets are what the user sees after the rerun, and the
-    stored list is what `assemble_hymn` and the lyric importer read back.
-    """
-    base = _ly_base(uid_kind, uid)
-    src = _ly_stanzas(uid_kind, uid)
-    if src is None:
-        return
-    old = len(src)
-    src[:] = values
-    for j, v in enumerate(values):
-        st.session_state[K(f"{base}verses_{j}")] = v
-    for j in range(len(values), old):
-        st.session_state.pop(K(f"{base}verses_{j}"), None)
-
-
-def _ly_queue(uid_kind, uid, action, *args):
-    """Record a 段 change and rerun, so `_ly_stanza_editors` applies it.
-
-    Streamlit refuses to write a widget key once that widget has been
-    instantiated in the current run (`StreamlitAPIException`), and the ▲▼⧉🗑
-    controls and ＋新增一段 all live *after* — or inside — the stanza loop, so
-    `verses_0…verses_j` are already real widgets by the time they are clicked.
-    The top of the next run, before the loop re-creates them, is the only point
-    where permuting those keys is legal.  `pending` is not a widget key, so
-    setting and popping it mid-loop is always fine.
-
-    Callers must not rerun before the stanza loop has rendered — see
-    `_ly_stanza_editors`, which collects its click and queues it afterwards.
-    """
-    st.session_state[K(_ly_base(uid_kind, uid) + "pending")] = (action, args)
-    st.rerun()
-
-
-def _ly_add_stanza(uid_kind, uid):
-    """Append an empty 段."""
-    _ly_queue(uid_kind, uid, "add")
-
-
-def _ly_drain(uid_kind, uid):
-    """Apply whatever `_ly_queue` recorded, before any stanza widget exists."""
-    action, args = st.session_state.pop(
-        K(_ly_base(uid_kind, uid) + "pending"), (None, ()))
-    if action is None:
-        return
-    vals = _ly_values(uid_kind, uid)
-    if action == "move":
-        i, delta = args
-        j = i + delta
-        if 0 <= i < len(vals) and 0 <= j < len(vals):
-            vals[i], vals[j] = vals[j], vals[i]
-    elif action == "drop":
-        i = args[0]
-        if 0 <= i < len(vals):
-            vals.pop(i)
-            vals = vals or [""]
-    elif action == "dup":
-        i = args[0]
-        if 0 <= i < len(vals):
-            vals.insert(i + 1, vals[i])
-    elif action == "add":
-        vals.append("")
-    else:
-        return
-    _ly_commit(uid_kind, uid, vals)
-
-
-def _ly_stanza_editors(uid_kind, uid):
-    """The 段 list for one song: a text box per 段, each with ▲▼ to reorder, ⧉ to
-    duplicate and 🗑 to delete.
-
-    Streamlit has no drag-and-drop list widget (checked 1.56.0 — the `drag` hits
-    in the package are Plotly's dragmode), and the real thing needs a Node-built
-    third-party component, so ▲▼ gives the same result in one click.
-
-    段 are addressed by position (`verses_0`, `verses_1`, …), so a move has to
-    permute the values across those keys rather than renumber anything — hence
-    `_ly_queue` / `_ly_drain`.
-    """
-    base = _ly_base(uid_kind, uid)
-    _ly_drain(uid_kind, uid)
-    src = _ly_stanzas(uid_kind, uid)
-    if src is None:
-        return
-    n = max(len(src), 1)
-    st.caption(f"共 {n} 段 · 每段＝一張 slide，每行一句 · "
-               "▲▼ 調整次序，⧉ 複製，🗑 刪除")
-    clicked = None
-    for j in range(n):
-        st.session_state.setdefault(
-            K(f"{base}verses_{j}"), src[j] if j < len(src) else "")
-        body, up, dn, dup, rm = st.columns(
-            [9, 1, 1, 1, 1], vertical_alignment="center")
-        with body:
-            st.text_area(f"第 {j + 1} 段（每行一句）",
-                         value=sv(f"{base}verses_{j}",
-                                  src[j] if j < len(src) else ""),
-                         key=K(f"{base}verses_{j}"), height=90)
-        if up.button("▲", key=K(f"{base}up_{j}"), help="這一段上移",
-                     use_container_width=True, disabled=(j == 0)):
-            clicked = ("move", j, -1)
-        if dn.button("▼", key=K(f"{base}dn_{j}"), help="這一段下移",
-                     use_container_width=True, disabled=(j == n - 1)):
-            clicked = ("move", j, +1)
-        if dup.button("⧉", key=K(f"{base}dup_{j}"),
-                      help="複製這一段，插在它下面",
-                      use_container_width=True):
-            clicked = ("dup", j)
-        if rm.button("🗑", key=K(f"{base}rm_{j}"), help="刪除這一段",
-                     use_container_width=True):
-            clicked = ("drop", j)
-    # Act only after every text box has been rendered.  Calling `_ly_queue`
-    # inside the loop would rerun mid-script, and Streamlit discards the state
-    # of widgets a run never reached — the remaining 段 would come back empty.
-    if clicked:
-        _ly_queue(uid_kind, uid, *clicked)
 
 
 def _focus_hymn(uid, uids):
@@ -1401,14 +1243,14 @@ def _focus_hymn(uid, uids):
 
 def _song_badge(uid, h):
     """One-glance status for a song header / summary card: how many 段, or the
-    first thing still missing.  Reads the live widget values so it tracks typing."""
+    first thing still missing.  Reads the live editor text so it tracks typing."""
     title = sv(f"hymn_{uid}_title", h.get("title", "")) or ""
-    vals = _ly_values("hymn", uid)
+    stanzas = _slide_blocks(sv(f"hymn_{uid}_paste", ""))
     if not title.strip():
         return "⚠ 未填曲名"
-    if not any(v.strip() for v in vals):
+    if not any(b.strip() for b in stanzas):
         return "⚠ 沒有歌詞"
-    return f"{len(vals)} 段"
+    return f"{len(stanzas)} 段"
 
 
 _TITLE_FIELDS = (("title", "曲名"), ("subtitle", "英文名"), ("source", "詩集"),
@@ -1416,30 +1258,61 @@ _TITLE_FIELDS = (("title", "曲名"), ("subtitle", "英文名"), ("source", "詩
 
 
 def _ly_fill_paste(uid_kind, uid, text, n_seg, info=None):
-    """Drop a library song into the 貼上整首詩歌 box rather than straight into the
-    段 fields, so the whole song can be edited in one place and split afterwards
-    with 匯入為各段.  ``info`` (a title card read from the library song) fills the
+    """Drop a library song into the 歌詞 editor box — its single editing surface.
+
+    Library pages often lead with a verse number (`1. …`) and tab indents; the
+    import strips the number from each page's first line (the same cleaning the
+    old 匯入為各段 did) so the box shows exactly what lands on the slides.
+    ``info`` (a title card read from the library song) fills the
     曲名/英文名/詩集/曲/詞 boxes below; empty fields are left as they were.
 
-    No `st.rerun()` on purpose: the search panel sits above the paste box and the
-    metadata boxes, so they render later in this same pass and pick the values up
-    on the way down.
+    No `st.rerun()` on purpose: the search panel sits above the editor box and
+    the metadata boxes, so they render later in this same pass and pick the
+    values up on the way down.
     """
     base = _ly_base(uid_kind, uid)
-    st.session_state[K(base + "paste")] = text
+    stanzas, _refrain, _repeat = _parse_hymn_paste(text, with_chorus=False)
+    st.session_state[K(base + "paste")] = "\n\n".join(stanzas)
     filled = []
     for field, label in _TITLE_FIELDS:
         val = (info or {}).get(field, "")
         if val:
             st.session_state[K(base + field)] = val
             filled.append(label)
-    msg = (f"已貼上 {n_seg} 段到「貼上整首詩歌」—"
-           "可直接在上方整首編輯，再按「匯入為各段」切成各段。")
+    usable = [s for s in stanzas if s.strip()]
+    msg = (f"已匯入 {n_seg} 頁 → **{len(usable)} 段**到歌詞編輯框。"
+           "可直接在框內繼續編輯：每段之間 1 個空行＝分 slide。")
     if info:
-        msg += "第一頁是標題卡，用來填寫欄位，不計入段數。"
+        msg += "第一頁是標題卡，已用來填寫下方欄位，不計入段數。"
     if filled:
         msg += "已填寫：" + "、".join(filled) + "。"
     st.success(msg)
+
+
+def _lyric_editor(uid_kind, uid):
+    """Single lyric editor, shown directly in the card.
+
+    One blank line separates slides; each line inside a slide is one slide line.
+    The box's session key is preserved across wizard steps by
+    `_restore_lapsed_fields` (like every other editor field), so edits survive
+    switching between sections.  The count line reflects the live blank-line
+    split as you type.
+    """
+    base = _ly_base(uid_kind, uid)
+    key = K(base + "paste")
+    st.text_area(
+        "歌詞編輯（每段之間 1 個空行＝分 slide · 每行＝一句）",
+        value=sv(base + "paste", ""),
+        key=key, height=360,
+        placeholder="貼上整首歌詞（或按上方「歌詞庫搜尋」匯入）…",
+        help="每個空行分隔的一段＝1 張 slide；段內每行＝畫面上的一句。"
+             "直接在框內增刪、調整行序即可，不需按任何匯入按鈕。")
+    stanzas = _slide_blocks(sv(base + "paste", ""))
+    usable = [b for b in stanzas if b.strip()]
+    if usable:
+        st.caption(f"共 **{len(usable)} 段**（每段＝1 張 slide）")
+    else:
+        st.caption("尚未輸入歌詞。每段之間留 1 個空行＝分 slide。")
 
 
 # Whole-song import keeps every page but the title card: slide 1 fills the
@@ -1542,9 +1415,8 @@ def _lyric_search_panel(uid_kind, uid):
         if b1.button(f"⬇️ 匯入整首詩歌（{n_seg} 段）",
                      key=K(f"{base}lyall"), use_container_width=True,
                      type="primary",
-                     help="把各頁歌詞貼進「貼上整首詩歌」；第一頁標題卡用來填寫"
-                          "曲名／英文名／詩集／曲／詞，不計入段數。"
-                          "不會直接改動下面的各段。"):
+                     help="把各頁歌詞貼進下方歌詞編輯框；第一頁標題卡用來填寫"
+                          "曲名／英文名／詩集／曲／詞，不計入段數。"):
             _ly_fill_paste(uid_kind, uid, text, n_seg, info)
         # Opens the same pop-up as selecting a row, without a rerun: the button
         # click and the check below are in this same run, and the flag is
@@ -1828,11 +1700,18 @@ def _layout_radio(key):
     return sv(key.split("::")[-1], READING_LAYOUT_DEFAULT)
 
 
+def _song_font_options(cur):
+    """歌詞字級選項：48–54pt；舊週次存有範圍外的值時一併補進，避免 selectbox
+    因值不在清單而報錯。"""
+    return sorted(set(range(48, 55)) | {cur})
+
+
 def _song_font_selector(label, hint=None):
-    """歌詞字級下拉（48–54pt），label 與下拉同一行並緊貼。若舊週次存有
-    範圍外的數值，自動補進選項，避免 selectbox 因值不在清單而報錯。"""
-    cur = int(sv("hymn_font_max", 48) or 48)
-    options = sorted(set(range(48, 55)) | {cur})
+    """歌詞字級下拉（見 _song_font_options 的選項），label 與下拉同一行並緊貼。
+    若舊週次存有範圍外的數值，自動補進選項，避免 selectbox 因值不在清單而報錯。
+    """
+    cur = int(sv("hymn_font_max", 52) or 52)
+    options = _song_font_options(cur)
     c1, c2, _ = st.columns([1.3, 0.9, 5], vertical_alignment="center")
     c1.markdown(f"**{label}**")
     c2.selectbox(
@@ -2103,6 +1982,620 @@ def _step_nav(step):
         st.rerun()
 
 
+def _sanity_ref_norm(text):
+    """Normalize a 出處 string for comparison: expand book names (詩→詩篇),
+    drop any version label in parens (（和合本）), then strip whitespace and
+    punctuation and lowercase.  「詩 34:1-3」→「詩篇3413」；
+    「羅馬書 12:1-8（和合本）」→「羅馬書1218」."""
+    s = bible.expand_book_ref(text or "")
+    s = re.sub(r"[（(][^）)]*[）)]", "", s)
+    s = re.sub(r"[^\w\s]", "", s, flags=re.UNICODE)
+    return re.sub(r"\s+", "", s).lower()
+
+
+def _sanity_find_ref(line):
+    """Return the first bible-reference substring (e.g. 羅馬書 12:1-8) found
+    anywhere in a slide line, or None.  Labels like 「經文：」 or quotes around
+    the reference are tolerated; the longest book name wins."""
+    if not line:
+        return None
+    for name in sorted(bible.BOOK_NAMES, key=len, reverse=True):
+        idx = line.find(name)
+        if idx < 0:
+            continue
+        rest = line[idx + len(name):]
+        m = re.match(r"\s*(\d+)\s*[:：]\s*(\d+(?:[\-–—～,，]\d+)*)", rest)
+        if m:
+            return f"{name} {m.group(1)}:{m.group(2)}"
+    return None
+
+
+def _deck_slide_infos(data):
+    """Read a compiled pptx back into [{bg, lines, imgs, maxsize}] for the sanity
+    check: `bg` is the slide's solid background hex (or None when it is a picture
+    or inherits the template), `lines` the non-empty text lines of its shapes,
+    `imgs` the SHA1 hashes of its picture shapes (template pages such as
+    聖餐／使徒信經 are recognised by these), and `maxsize` the largest explicit
+    font size on the slide (used to spot song title cards in imported decks)."""
+    from pptx import Presentation
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    pres = Presentation(io.BytesIO(data))
+    out = []
+    for slide in pres.slides:
+        lines = []
+        imgs = []
+        maxsize = None
+        for shp in slide.shapes:
+            try:
+                if shp.shape_type == MSO_SHAPE_TYPE.PICTURE \
+                        and shp.image is not None:
+                    imgs.append(hashlib.sha1(shp.image.blob).hexdigest())
+            except Exception:
+                pass
+            if not shp.has_text_frame:
+                continue
+            for para in shp.text_frame.paragraphs:
+                for r in para.runs:
+                    if r.font.size is not None:
+                        pt = float(r.font.size.pt)
+                        if maxsize is None or pt > maxsize:
+                            maxsize = pt
+                t = "".join(r.text for r in para.runs).strip()
+                if t:
+                    lines.append(t)
+        bg = None
+        try:
+            fill = slide.background.fill
+            if fill.type is not None:
+                bg = str(fill.fore_color.rgb)
+        except Exception:
+            bg = None
+        out.append({"bg": bg, "lines": lines, "imgs": imgs, "maxsize": maxsize})
+    return out
+
+
+def _sanity_check_scripture(week, deck=None):
+    """Sanity check: does 讀經經文 match the 講道信息 經文?
+
+    Each side is taken from the week's content first (scripture.ref vs
+    sermon.scripture).  When the generated full deck (`deck` = pptx bytes) is
+    given, the refs actually rendered on the slides are read back too — the
+    講道 經文 sits on one of the first four slides of the 講道信息 section —
+    the slides right after the gold divider when the deck was generated here,
+    otherwise the slides right after the navy 讀經 pages, so imported .pptx
+    sections are covered too.  Labels like 「經文：羅馬書 12:1-8」 are
+    tolerated.  Returns a report dict:
+    {status: ok|contained|mismatch|missing, scr, ser, scr_src, ser_src}."""
+    scr = week.get("scripture") or {}
+    ser = week.get("sermon") or {}
+    src = str(scr.get("ref") or "").strip()
+    s_sr = str(ser.get("scripture") or "").strip()
+
+    deck_line = {"scr": None, "ser": None}
+    if deck:
+        infos = _deck_slide_infos(deck)
+        navy = [i for i, s in enumerate(infos) if s["bg"] == READING_BG]
+        # 讀經 ref：最後一張 navy（讀經）slide 上的經文出處。
+        if navy:
+            for ln in infos[navy[-1]]["lines"]:
+                r = _sanity_find_ref(ln)
+                if r:
+                    deck_line["scr"] = r
+                    break
+        # 講道 經文：講道章節開頭（本 App 產生的 gold divider 之後；匯入的
+        # .pptx 則為讀經之後）的前四張 slide，取最先出現的經文出處。
+        start = 0
+        for i in range(len(infos) - 1):
+            if infos[i]["bg"] == SERMON_GOLD:
+                start = i + 1
+                break
+        if start == 0 and navy:
+            start = navy[-1] + 1
+        if start:
+            for idx in range(start, min(start + 4, len(infos))):
+                for ln in infos[idx]["lines"]:
+                    r = _sanity_find_ref(ln)
+                    if r:
+                        deck_line["ser"] = r
+                        break
+                if deck_line["ser"]:
+                    break
+
+    # Source first; the deck read-back only steps in when the field is blank
+    # (covers sections pulled in from .pptx).
+    scr_ref, scr_src = (src, "week") if src else (deck_line["scr"], "deck")
+    ser_ref, ser_src = (s_sr, "week") if s_sr else (deck_line["ser"], "deck")
+    scr_ref = scr_ref or ""
+    ser_ref = ser_ref or ""
+
+    n_scr, n_ser = _sanity_ref_norm(scr_ref), _sanity_ref_norm(ser_ref)
+    if not n_scr and not n_ser:
+        status = "missing"
+    elif not n_scr or not n_ser:
+        status = "missing"
+    elif n_scr == n_ser:
+        status = "ok"
+    elif n_scr in n_ser or n_ser in n_scr:
+        status = "contained"
+    else:
+        status = "mismatch"
+    return {"status": status, "scr": scr_ref, "ser": ser_ref,
+            "scr_src": scr_src, "ser_src": ser_src}
+
+
+_PAGE_LABEL_RE = re.compile(r"^(\d+)/(\d+)$")
+
+# Section headers that may sit atop an imported song deck (獻詩／回應) — treated
+# as headers, not songs, by the slide-count check.  generate_deck only
+# auto-drops the dividers it adds itself, so 獻詩 is listed here.
+_SANITY_DIVIDERS = set(_DIVIDER_TITLES) | {"獻詩", "奉獻詩", "奉獻"}
+
+
+def _sanity_page_label(lines):
+    """The `N/M` page label of a song lyric slide, or None (a title card)."""
+    for ln in lines:
+        m = _PAGE_LABEL_RE.match(ln.strip())
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return None
+
+
+def _sanity_card_title(lines):
+    """The title printed on a song title card — its first text line that is not
+    an `N/M` page label — or None for a blank card."""
+    for ln in lines:
+        t = ln.strip()
+        if t and not _PAGE_LABEL_RE.match(t):
+            return t
+    return None
+
+
+def _sanity_is_divider(lines):
+    """True when a slide is nothing but a section title card such as 詩歌敬拜 —
+    its text (page labels aside) equals one of the divider titles, so a hymn
+    title card ("真光普照 / 美樂頌125") never matches."""
+    joined = "".join(ln.strip() for ln in lines
+                     if not _PAGE_LABEL_RE.match(ln.strip()))
+    joined = joined.replace(" ", "").replace("　", "")
+    return joined in _SANITY_DIVIDERS
+
+
+def _sanity_song_groups(infos):
+    """[(slides, title)] splitting a song section deck into songs, where
+    `slides` is that song's slide infos (its title card first).
+
+    Decks produced here tag every lyric slide with an `N/M` page label, so a
+    label-less slide starts a new song — counting even a title-only song as one
+    slide.  Imported decks carry no labels; there a slide whose largest font
+    stands clearly above the lyric body size is taken as a title card, and
+    known section-title cards (詩歌敬拜／獻詩／詩歌回應…) are ignored.  Returns
+    None when the songs cannot be told apart (fall back to content estimates)."""
+    if not infos:
+        return None
+    if any(_sanity_page_label(s["lines"]) for s in infos):
+        groups, cur = [], None
+        for s in infos:
+            if cur is None or _sanity_page_label(s["lines"]) is None:
+                if cur is not None:            # a new title card begins a song
+                    groups.append(cur)
+                cur = ([[s], _sanity_card_title(s["lines"])])
+            else:
+                cur[0].append(s)
+        if cur is not None:
+            groups.append(cur)
+        return [(sl, t) for sl, t in groups]
+
+    # No page labels → imported deck: split on font-size title cards.
+    sizes = [s.get("maxsize") for s in infos if s.get("maxsize")]
+    if not sizes:
+        return None
+    body = max(set(sizes), key=sizes.count)      # most common lyric size
+    cards = [i for i, s in enumerate(infos)
+             if s.get("maxsize") and s["maxsize"] > body + 5
+             and not _sanity_is_divider(s["lines"])]
+    if not cards:
+        return None
+    groups = []
+    for k, i in enumerate(cards):
+        end = cards[k + 1] if k + 1 < len(cards) else len(infos)
+        groups.append((infos[i:end], _sanity_card_title(infos[i]["lines"])))
+    return groups
+
+
+def _sanity_group_song_slides(infos):
+    """[(slides, title)] → [(count, title)] (each count includes the title card)."""
+    groups = _sanity_song_groups(infos)
+    return None if groups is None else [(len(sl), t) for sl, t in groups]
+
+
+def _sanity_norm_text(s):
+    """Lyric text reduced to its letters/characters — whitespace and punctuation
+    dropped — so full-width commas/periods and line wrapping do not matter."""
+    return re.sub(r"\W+", "", s or "", flags=re.UNICODE)
+
+
+def _sanity_expected_lyrics(cfg):
+    """The lyric lines `cfg` would put on its slides, in the generator's order
+    (each verse, the refrain repeated after it when so configured, else once)."""
+    verses = cfg.get("verses") or []
+    refrain = cfg.get("refrain") or None
+    repeat = bool(refrain) and cfg.get("refrain_after_every_verse", True)
+    out = []
+    for vs in verses:
+        out.extend(vs)
+        if repeat:
+            out.extend(refrain)
+    if refrain and not repeat:
+        out.extend(refrain)
+    return out
+
+
+def _sanity_song_sources(week):
+    """[(label, song_cfg, slides)] for every content song in the service — the
+    詩歌敬拜 hymns masked by index onto the songs deck, then 詩歌回應.  `slides`
+    is that song's slide infos, or None when it has no generated slides."""
+    hymns = week.get("hymns") or []
+    groups = _sanity_song_groups(_sanity_section_deck_infos("songs", week))
+    resp = week.get("response") or {}
+    rgroups = _sanity_song_groups(_sanity_section_deck_infos("response", week))
+    out = []
+    for i, h in enumerate(hymns):
+        sl = groups[i][0] if groups and i < len(groups) else None
+        out.append((h.get("title") or f"詩歌敬拜 第 {i + 1} 首", h, sl))
+    if resp.get("title") or resp.get("verses"):
+        sl = rgroups[0][0] if rgroups else None
+        out.append((resp.get("title") or "詩歌回應", resp, sl))
+    return out
+
+
+def _sanity_lyric_check(week):
+    """Compare each song's entered/edited lyrics with the words actually on its
+    generated slides.  Returns (diffs, compared): `diffs` is [(label, missing,
+    extra)] — content lyric lines not found on the slides, and slide lines not
+    found in the content — for songs that differ (an uploaded deck, or a saved
+    songs deck left stale after an edit); `compared` is how many songs had both
+    content lyrics and slides to check."""
+    diffs, compared = [], 0
+    for label, cfg, slides in _sanity_song_sources(week):
+        if not slides or len(slides) < 2:
+            continue
+        expected = _sanity_expected_lyrics(cfg)
+        if not any(_sanity_norm_text(ln) for ln in expected):
+            continue
+        compared += 1
+        slide_lines = [ln for s in slides[1:] for ln in s["lines"]
+                       if not _PAGE_LABEL_RE.match(ln.strip())]
+        exp_norm = [(ln, _sanity_norm_text(ln)) for ln in expected]
+        sl_norm = [(ln, _sanity_norm_text(ln)) for ln in slide_lines]
+        exp_set = {x for _ln, x in exp_norm if x}
+        sl_set = {x for _ln, x in sl_norm if x}
+        missing = [ln for ln, x in exp_norm if x and x not in sl_set]
+        extra = [ln for ln, x in sl_norm if x and x not in exp_set]
+        if missing or extra:
+            diffs.append((label, missing, extra))
+    return diffs, compared
+
+
+def _sanity_char_diff(a, b):
+    """Mark, character by character, how normalised line `a` becomes `b`:
+    changed runs as 〔a→b〕, drops as 〔-a〕 and additions as 〔+b〕."""
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    out = []
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            out.append(a[i1:i2])
+        elif tag == "replace":
+            out.append("〔%s→%s〕" % (a[i1:i2], b[j1:j2]))
+        elif tag == "delete":
+            out.append("〔-%s〕" % a[i1:i2])
+        else:
+            out.append("〔+%s〕" % b[j1:j2])
+    return "".join(out)
+
+
+def _sanity_lib_norm(s):
+    """Library-style fold of a lyric line: 祢/祂 read as 你/他 (a spelling
+    variant, not a typo) and punctuation/space dropped (see lyric_search.norm)."""
+    return lyric_search.norm((s or "").replace("祢", "你").replace("祂", "他"))
+
+
+def _sanity_lib_song(cfg, lib):
+    """The built-in library hymn matching song `cfg` — (name, collection,
+    [lines]) or None.
+
+    Matches the 曲名 against the library names and confirms it with a lyric
+    overlap, so a same-named but different hymn is never reported against;
+    returns None (skip the check) when nothing overlaps."""
+    title = _sanity_lib_norm(cfg.get("title"))
+    if len(title) < 2:
+        return None
+    clines = {x for x in (_sanity_lib_norm(ln)
+                          for ln in _sanity_expected_lyrics(cfg))
+              if len(x) >= 3}
+    if not clines:
+        return None
+    need = max(2, len(clines) // 3)
+    best = None
+    for key, (name, where) in lib.meta.items():
+        nname = _sanity_lib_norm(name)
+        if not nname:
+            continue
+        if nname != title and title not in nname \
+                and not (len(nname) >= 3 and nname in title):
+            continue
+        ltext = "\n".join(text for _no, text, _n in lib.songs[key])
+        lnorms = [_sanity_lib_norm(ln) for ln in ltext.split("\n")]
+        shared = sum(1 for c in clines if any(c in l for l in lnorms))
+        if shared >= need and (best is None or shared > best[0]):
+            best = (shared, key, name, where)
+    if best is None:
+        return None
+    _shared, key, name, where = best
+    raw = [ln.strip() for _no, text, _n in lib.songs[key]
+           for ln in text.split("\n") if ln.strip()]
+    return name, where, raw
+
+
+def _sanity_lib_word_check(week, limit=6):
+    """Fingerprint each content song's lyrics against the built-in hymn library.
+
+    Returns (diffs, compared): `diffs` is [(label, collection, pairs)] where
+    `pairs` is [(content_line, library_line, diff)] for lines that closely
+    resemble a library line but are not identical — a likely 用錯字 (the library
+    edition may differ, so these are hints); `compared` counts the songs that
+    matched a library hymn and so could be checked."""
+    try:
+        lib = lyric_search.get_library()
+    except Exception:
+        return [], 0
+    if not len(lib):
+        return [], 0
+    resp = week.get("response") or {}
+    songs = [(h.get("title") or f"詩歌敬拜 第 {i + 1} 首", h)
+             for i, h in enumerate(week.get("hymns") or [])]
+    if resp.get("title") or resp.get("verses"):
+        songs.append((resp.get("title") or "詩歌回應", resp))
+    diffs, compared = [], 0
+    for label, cfg in songs:
+        hit = _sanity_lib_song(cfg, lib)
+        if not hit:
+            continue
+        compared += 1
+        _name, where, raw = hit
+        lib_lines = [(ln, _sanity_lib_norm(ln)) for ln in raw]
+        lib_norms = [x for _ln, x in lib_lines if len(x) >= 2]
+        pairs = []
+        for cl in _sanity_expected_lyrics(cfg):
+            c = _sanity_lib_norm(cl)
+            if len(c) < 3:
+                continue
+            if c in lib_norms or any(c in x for x in lib_norms):
+                continue
+            best, best_r = None, 0.0
+            for ln, x in lib_lines:
+                if len(x) < 2:
+                    continue
+                r = difflib.SequenceMatcher(None, c, x, autojunk=False).ratio()
+                if r > best_r:
+                    best, best_r = (ln, x), r
+            if best is not None and best_r >= 0.6:
+                pairs.append((cl, best[0], _sanity_char_diff(c, best[1])))
+        if pairs:
+            diffs.append((label, where, pairs[:limit]))
+    return diffs, compared
+
+
+def _sanity_slide_text(s):
+    """A song lyric slide's text with its `N/M` page label dropped, normalised
+    (punctuation/space removed) so wrapping and full-width marks do not matter."""
+    return _sanity_norm_text("".join(
+        ln for ln in s["lines"] if not _PAGE_LABEL_RE.match(ln.strip())))
+
+
+def _sanity_slide_duplicates(week, threshold=0.85, limit=4):
+    """Find pairs of a song's own lyric slides that are almost identical — the
+    same slide printed twice with a word changed (a likely typo, an extra／missing
+    word, or a second edition that survived trimming).  Exactly identical slides
+    (a refrain sung the same way each time) are expected and not reported.
+
+    Returns (dups, compared): `dups` is [(label, pairs)] with `pairs` =
+    [(page_a, page_b, ratio, diff)]; `compared` counts the songs that had at least
+    two lyric slides to compare."""
+    dups, compared = [], 0
+    for label, _cfg, slides in _sanity_song_sources(week):
+        if not slides or len(slides) < 3:      # title card + 2 lyric slides
+            continue
+        body = slides[1:]
+        texts, nos = [], []
+        for k, s in enumerate(body):
+            texts.append(_sanity_slide_text(s))
+            pl = _sanity_page_label(s["lines"])
+            nos.append(pl[0] if pl else k + 2)
+        if sum(1 for t in texts if t) < 2:
+            continue
+        compared += 1
+        pairs = []
+        for i in range(len(texts)):
+            if not texts[i]:
+                continue
+            for j in range(i + 1, len(texts)):
+                if not texts[j] or texts[i] == texts[j]:
+                    continue
+                r = difflib.SequenceMatcher(None, texts[i], texts[j],
+                                            autojunk=False).ratio()
+                if r >= threshold:
+                    pairs.append((nos[i], nos[j], r,
+                                  _sanity_char_diff(texts[i], texts[j])))
+        if pairs:
+            pairs.sort(key=lambda p: (-p[2], p[0], p[1]))
+            dups.append((label, pairs[:limit]))
+    return dups, compared
+
+
+_SANITY_UPLOAD_KEYS = {"songs": "build_songs", "offering": "build_offering",
+                       "response": "build_response"}
+
+
+def _sanity_section_deck_infos(section, week):
+    """Slides of the generated section deck that build_deck will merge into the
+    full deck, resolved the same way: an upload chosen this session, else the
+    saved section pptx when 合併先前各步驟投影片檔 is on, else freshly compiled
+    from the assembled content.  Returns [{bg, lines, imgs, maxsize}] or None."""
+    data = None
+    up = sv(_SANITY_UPLOAD_KEYS.get(section, ""), None)
+    if up is not None:
+        try:
+            data = up.getvalue()
+        except AttributeError:
+            try:
+                with open(str(up), "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                data = None
+    if data is None and sv("use_saved", True):
+        path = saved_section_path(section, DATE)
+        if path:
+            try:
+                with open(path, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                data = None
+    if data is None:
+        build_sec = "hymns" if section == "songs" else section
+        try:
+            data, _ = build_section_pptx_bytes(build_sec, week)
+        except Exception:
+            return None
+    try:
+        return _deck_slide_infos(data)
+    except Exception:
+        return None
+
+
+def _estimate_song_slides(verses, refrain, repeat_after_every):
+    """Total slides a song needs — 1 title card + lyric pages — with the same
+    refrain arithmetic the generator uses (see _hymn_slide_count)."""
+    n = 1 + len(verses or [])
+    if refrain:
+        n += len(verses or []) if repeat_after_every else 1
+    return n
+
+
+def _sanity_section_counts(section, week, default_label):
+    """[(label, slides)] for a single song-like section (獻詩／詩歌回應) that is
+    merged from its own deck: one row per song, split on title cards, or a
+    single row for the whole deck when it cannot be split.  [] when the section
+    has no generated slides at all (so nothing is reported)."""
+    infos = _sanity_section_deck_infos(section, week)
+    if not infos:
+        return []
+    groups = _sanity_group_song_slides(infos)
+    if groups:
+        rows = []
+        for k, (n, card) in enumerate(groups):
+            label = card or (default_label if k == 0
+                             else f"{default_label}（第 {k + 1} 首）")
+            rows.append((label, n))
+        return rows
+    n = sum(1 for s in infos if not _sanity_is_divider(s["lines"]))
+    return [(default_label, n)] if n else []
+
+
+def _sanity_song_counts(week):
+    """[(label, total slides incl. title card)] for every song that has slides —
+    詩歌敬拜 hymns first, then 獻詩 (offering, only when a deck is merged), then
+    詩歌回應.  Counts come from the GENERATED slides: each section deck (saved
+    pptx when one is merged, else compiled from content).  Song names come from
+    the content, falling back to the title printed on each generated title
+    card.  Content estimates are the last resort when a deck cannot be grouped."""
+    hymns = week.get("hymns") or []
+    resp = week.get("response") or {}
+    resp_has = bool(resp.get("title") or resp.get("verses"))
+    out = []
+
+    groups = _sanity_group_song_slides(
+        _sanity_section_deck_infos("songs", week))
+    for i, h in enumerate(hymns):
+        card = None
+        if groups and i < len(groups):
+            n, card = groups[i]
+        else:
+            n = _estimate_song_slides(h.get("verses") or [], h.get("refrain"),
+                                      h.get("refrain_after_every_verse", True))
+        label = h.get("title") or card or f"詩歌敬拜 第 {i + 1} 首"
+        out.append((label, n))
+    if groups:
+        for i in range(len(hymns), len(groups)):
+            n, card = groups[i]
+            out.append((card or f"未命名詩歌（第 {i + 1} 首）", n))
+
+    # 獻詩（只有上載／雲端的 pptx，沒有內容欄位；有投影片才算）。
+    out += _sanity_section_counts("offering", week, "獻詩")
+
+    # 詩歌回應（有投影片或有內容才算）。
+    rrows = _sanity_section_counts("response", week, "詩歌回應")
+    if rrows:
+        if resp.get("title"):
+            _label, n = rrows[0]
+            rrows[0] = (resp["title"], n)
+        out += rrows
+    elif resp_has:
+        n = _estimate_song_slides(resp.get("verses") or [],
+                                  resp.get("refrain"),
+                                  resp.get("refrain_after_every_verse", False))
+        out.append((resp.get("title") or "詩歌回應", n))
+    return out
+
+
+def _sanity_expected_image(name):
+    """Path of the built-in template image `name` (communion / apostles_creed),
+    mirroring generate_deck.image_path's default resolution."""
+    val = IMAGE_SLIDES.get(name)
+    if not val:
+        return None
+    if not os.path.isabs(val):
+        val = os.path.join(os.getcwd(), val)
+    return val if os.path.isfile(val) else None
+
+
+def _sanity_image_sha(path):
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha1(fh.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _sanity_communion_check(week, infos=None):
+    """First-Sunday template pages: 聖餐 + 使徒信經 should be in the deck.
+    Returns (ok, note) — ok False when a template page is missing.  An
+    imported communion_<date>.pptx substitutes for both, so the note says so."""
+    if not is_first_sunday(DATE):
+        return True, ""
+    if infos:
+        wanted = {n: _sanity_image_sha(_sanity_expected_image(n))
+                  for n in ("communion", "apostles_creed")}
+        if not all(wanted.values()):
+            return True, "（第一主日：樣板圖片檔無法讀取，無法比對投影片。）"
+        found = set()
+        for s in infos:
+            for h in s.get("imgs", ()):
+                for n, want in wanted.items():
+                    if want and h == want:
+                        found.add(n)
+        labels = {"communion": "聖餐", "apostles_creed": "使徒信經"}
+        missing = [n for n in ("communion", "apostles_creed") if n not in found]
+        if missing:
+            return False, "第一主日：投影片中未見" + "、".join(
+                labels[n] for n in missing) + "樣板頁" + \
+                "（若以雲端 _communion_<日期>.pptx_ 取代則可略過）。"
+        return True, ""
+    if not week.get("communion"):
+        return False, "第一主日：內容未勾選「聖餐＋使徒信經」" + \
+            "（若已由雲端 _communion_<日期>.pptx_ 取代則不必勾選）。"
+    return True, ""
+
+
 def _scripture_editor(prefix, section=None):
     """讀經經文 editor — step 4 of the main wizard, or the standalone
     經文投影片 flow. Field keys are `{prefix}_{field}`. With `section`
@@ -2337,7 +2830,8 @@ with tab_edit:
                         key=K("hymn_text_shadow"))
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="固定字級（48–54pt），不隨行長縮小；行太長時自動換行。"
+                hint="固定字級（預設 52pt、可選 48–54pt），不隨行長縮小；"
+                     "行太長時自動換行。"
                      "標點符號以空格取代（如「，」「。」→ 空白）。"
                      "每首詩歌可用下方「背景圖」各自指定背景。")
 
@@ -2390,19 +2884,7 @@ with tab_edit:
                     st.caption(
                         f"{_song_title(uid, h) or '（未命名）'} · {badge}")
                     _lyric_search_panel("hymn", uid)
-                    st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
-                                 value=sv(f"hymn_{uid}_paste", ""),
-                                 key=K(f"hymn_{uid}_paste"), height=300)
-                    st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                               "或直接貼上，改完再按下方藍色"
-                               "「匯入為各段」切成各段（每段＝一張 slide）。")
-                    if st.button("匯入為各段", type="primary",
-                                 use_container_width=True,
-                                 key=K(f"hymn_{uid}_apply_paste")):
-                        _apply_parsed("hymn", uid,
-                                      st.session_state.get(
-                                          K(f"hymn_{uid}_paste"), ""),
-                                      with_chorus=False)
+                    _lyric_editor("hymn", uid)
                     c1, c2 = st.columns(2)
                     c1.text_input("曲名",
                                   value=sv(f"hymn_{uid}_title", h.get("title")),
@@ -2424,9 +2906,6 @@ with tab_edit:
                                   key=K(f"hymn_{uid}_lyricist"))
                     with st.expander("🎨 背景圖"):
                         _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
-                    _ly_stanza_editors("hymn", uid)
-                    if st.button("＋ 新增一段", key=K(f"hymn_{uid}_addstanza")):
-                        _ly_add_stanza("hymn", uid)
                     st.divider()
                     with st.expander("▶ 預覽這首詩歌的 slides"):
                         pcol1, pcol2 = st.columns([0.42, 0.58])
@@ -2512,22 +2991,12 @@ with tab_edit:
                            "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="與「詩歌敬拜」共用同一設定（48–54pt）。")
+                hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
                 st.session_state.setdefault(K(name), "")
-            st.text_area("貼上整首詩歌（協議：每段之間 1 個空行＝分 slide）",
-                         value=sv("resp_paste", ""), key=K("resp_paste"),
-                         height=300)
-            st.caption("整首在這裡改最方便：從上方「歌詞庫搜尋」匯入整首詩歌，"
-                       "或直接貼上，改完再按下方藍色"
-                       "「匯入為各段」切成各段（每段＝一張 slide）。")
-            if st.button("匯入為各段", type="primary",
-                         use_container_width=True,
-                         key=K("resp_apply_paste")):
-                _apply_parsed("resp", "", st.session_state.get(K("resp_paste"), ""),
-                              with_chorus=False)
+            _lyric_editor("resp", "")
             c1, c2 = st.columns(2)
             c1.text_input("曲名", value=sv("resp_title"), key=K("resp_title"))
             c2.text_input("英文名", value=sv("resp_subtitle"),
@@ -2539,9 +3008,6 @@ with tab_edit:
                           key=K("resp_lyricist"))
             with st.expander("🎨 背景圖"):
                 _bg_picker("resp_bg", "")
-            _ly_stanza_editors("resp", "")
-            if st.button("＋ 新增一段", key=K("resp_add")):
-                _ly_add_stanza("resp", "")
             _finalize_stamp("resp_finalized", "詩歌回應")
 
     elif step == 7:
@@ -2792,3 +3258,106 @@ with gen_slot:
         )
         st.caption(f"預估 {st.session_state.get('built_count', '?')} 頁；"
                    "檔案在瀏覽器下載，不會儲存在Server。")
+
+    st.divider()
+    if st.button("🔍 整場檢查（讀經↔講道 · 詩歌頁數＋歌詞＋用字＋重複 · 第一主日樣板）",
+                 key=K("sanity_check"), use_container_width=True,
+                 help="比對「讀經經文」與「講道信息」的經文出處、檢查所有詩歌"
+                      "（詩歌敬拜／獻詩／詩歌回應）至少 4 頁（含標題卡）、"
+                      "比對投影片歌詞與內容是否一致、對照內建歌詞庫提示可能"
+                      "用錯字的地方、找出同一首歌內幾乎相同（只差一個字）的"
+                      "重複投影片，並確認第一主日含有聖餐＋使徒信經樣板頁。"
+                      "會同時核對內容欄位與已產生的投影片。"):
+        week = assemble_week(DATE)
+        has_deck = bool(built and st.session_state.get("built_date") == DATE)
+        infos = _deck_slide_infos(built) if has_deck else None
+        rep = _sanity_check_scripture(week, built if has_deck else None)
+        if rep["status"] == "ok":
+            st.success(f"✅ 相符：讀經「{rep['scr']}」＝ 講道「{rep['ser']}」")
+        elif rep["status"] == "contained":
+            st.warning(
+                f"⚠️ 範圍重疊：讀經「{rep['scr']}」與講道「{rep['ser']}」"
+                "出自同一經卷但範圍不同，請確認讀經範圍是否涵蓋講道經文。")
+        elif rep["status"] == "mismatch":
+            st.error(
+                f"❌ 不一致：讀經「{rep['scr']}」vs 講道「{rep['ser']}」——"
+                "經文出處不同，請確認。")
+        else:
+            missing = ("讀經" if not _sanity_ref_norm(rep["scr"]) else "") \
+                + ("講道" if not _sanity_ref_norm(rep["ser"]) else "")
+            if not _sanity_ref_norm(rep["scr"]) and not _sanity_ref_norm(rep["ser"]):
+                st.info("ℹ️ 讀經與講道都尚未填寫經文出處，無法比對。")
+            else:
+                st.info(f"ℹ️ {missing}尚未填寫經文出處，無法完整比對。"
+                        "填寫後可重新檢查。")
+        st.caption(
+            "讀經：{}　·　講道：{}　·　{}".format(
+                f"「{rep['scr']}」" if rep["scr"]
+                else "（未填寫）",
+                f"「{rep['ser']}」" if rep["ser"]
+                else "（未填寫）",
+                "檢查" + ("已產生的整場投影片及內容欄位" if has_deck
+                          else "內容欄位（尚未產生整場投影片）")))
+        if has_deck:
+            st.caption("出處來源：" + ("讀經＝內容欄位" if rep["scr_src"] == "week"
+                                       else "讀經＝投影片")
+                       + "、"
+                       + ("講道＝內容欄位" if rep["ser_src"] == "week"
+                          else "講道＝投影片（信息前四張）"))
+        # 詩歌頁數：所有詩歌（詩歌敬拜／獻詩／詩歌回應），取自產生的投影片。
+        song_counts = _sanity_song_counts(week)
+        short = [(lab, n) for lab, n in song_counts if n < 4]
+        if short:
+            st.warning("⚠️ 以下詩歌少於 4 頁（含標題卡）："
+                       + "、".join(f"「{lab}」只有 {n} 頁"
+                                   for lab, n in short)
+                       + "，請確認是否需補充歌詞段落。")
+        if song_counts:
+            st.caption("詩歌頁數（含獻詩／回應，取自產生的投影片）：" + "、".join(
+                f"「{lab}」{n} 頁" + (" ⚠️" if n < 4 else "")
+                for lab, n in song_counts))
+        # 歌詞比對：投影片上的歌詞是否與內容一致（修正後是否已重新產生）。
+        lyric_diffs, n_cmp = _sanity_lyric_check(week)
+        for label, missing, extra in lyric_diffs:
+            bits = []
+            if missing:
+                bits.append(f"內容有 {len(missing)} 行未見於投影片（"
+                            + "／".join(missing[:3])
+                            + ("…" if len(missing) > 3 else "") + "）")
+            if extra:
+                bits.append(f"投影片有 {len(extra)} 行不在內容中（"
+                            + "／".join(extra[:3])
+                            + ("…" if len(extra) > 3 else "") + "）")
+            st.warning(f"⚠️ 「{label}」投影片歌詞與內容不符：" + "；".join(bits)
+                       + "。可能是已上載／已產生的詩歌投影片尚未更新，或內容有誤"
+                       "（換行／分段不同也可能造成差異）。")
+        if lyric_diffs == [] and n_cmp:
+            st.caption(f"📝 歌詞比對：{n_cmp} 首歌的投影片歌詞與內容一致。")
+        # 用字比對：對照內建歌詞庫（lyrics/），提示可能用錯字的地方。
+        word_diffs, n_word = _sanity_lib_word_check(week)
+        for label, where, pairs in word_diffs:
+            items = "\n".join(
+                f"- 內容「{c}」／詩集「{l}」　差異：{d}" for c, l, d in pairs)
+            st.warning(f"📖 「{label}」對照歌詞庫（{where}）可能有 "
+                       f"{len(pairs)} 處用字不同：\n\n{items}\n\n"
+                       "（詩集版本可能與你所用不同，請自行核對。）")
+        if not word_diffs and n_word:
+            st.caption(f"📖 用字對照：{n_word} 首歌與歌詞庫相符。")
+        # 重複／幾近相同的投影片：同一首歌內幾乎一樣（只差一個字）的兩頁——可能是
+        # 重複的段落、未修剪乾淨的第二個版本，或打錯字。完全相同的重複（副歌每次
+        # 一樣）屬正常，不列出。
+        dup_slides, n_dup = _sanity_slide_duplicates(week)
+        for label, pairs in dup_slides:
+            items = "\n".join(
+                f"- 第 {a} 頁 ↔ 第 {b} 頁（相似度 {r * 100:.0f}%）　"
+                f"差異：{d}" for a, b, r, d in pairs)
+            st.warning(f"🔁 「{label}」有 {len(pairs)} 對幾乎相同的投影片"
+                       f"（可能重複，或只差一個字）：\n\n{items}")
+        if not dup_slides and n_dup:
+            st.caption(f"🔁 重複投影片：{n_dup} 首歌沒有幾乎相同的頁。")
+        # 第一主日：聖餐＋使徒信經 樣板頁。
+        comm_ok, comm_note = _sanity_communion_check(week, infos)
+        if not comm_ok:
+            st.warning("⚠️ " + comm_note)
+        elif comm_note:
+            st.caption("📌 " + comm_note)

@@ -1149,6 +1149,7 @@ def _image_cover(slide, path, width, height):
 
 
 READING_BG = "0B2A5B"          # 宣召經文／讀經經文 slides: darker navy bg
+SERMON_GOLD = "C9A227"         # 講道信息 gold divider slide
 
 
 def _new_slide(pres, color="1F3A6E", bg=None):
@@ -1212,7 +1213,7 @@ def build_hymns_section(pres, cfg, hymns):
         # title card
         slide = _new_slide(pres, bg=bg)
         title = hymn["title"]
-        tsize = 60
+        tsize = 70
         shadow = cfg.get("hymn_text_shadow", True)
         _fresh_textbox(slide, margin, 2.0, box_w, 1.4, [title],
                        tsize, typeface, PP_ALIGN.CENTER, shadow=shadow)
@@ -1228,7 +1229,7 @@ def build_hymns_section(pres, cfg, hymns):
             attrs.append("詞: " + hymn["lyricist"])
         if attrs:
             _fresh_textbox(slide, margin + 0.4, 4.3, box_w - 0.4, 1.6, attrs,
-                           26, typeface, PP_ALIGN.LEFT, shadow=shadow)
+                           40, typeface, PP_ALIGN.LEFT, shadow=shadow)
 
         # 每首詩歌的總頁數：各段（＋副歌）— 標題卡不計。
         verses = [[_hymn_clean_line(ln) for ln in vs]
@@ -1244,9 +1245,9 @@ def build_hymns_section(pres, cfg, hymns):
             total += len(verses)
         elif refrain:
             total += 1
-        # 歌詞字級：固定使用 hymn_font_max（預設 48pt、選單 48–54pt），
+        # 歌詞字級：固定使用 hymn_font_max（預設 52pt、選單 48–54pt），
         # 不隨行長縮小；行太長時由 word_wrap 自動換行。
-        song_size = int(cfg.get("hymn_font_max", 48) or 48)
+        song_size = int(cfg.get("hymn_font_max", 52) or 52)
         page = 0
 
         def add_verse(lines, bg=bg):
@@ -1291,7 +1292,7 @@ def build_sermon_section(pres, cfg, sermon):
     """講道信息：亮金色過場 + 題目頁（題目/副題/經文/講員/日期）+ 內容頁。"""
     margin, box_w, typeface = _section_geometry(cfg, pres)
     if sermon.get("title"):
-        _new_slide(pres, "C9A227")                   # 亮金色過場
+        _new_slide(pres, SERMON_GOLD)               # 亮金色過場
 
         slide = _new_slide(pres)
         items = []
