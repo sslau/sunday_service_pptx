@@ -4,7 +4,7 @@
     {
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
-      "hymn_font_max": 48,   # lyrics auto-fit ceiling (default 48pt; UI 48–54)
+      "hymn_font_max": 52,   # lyrics auto-fit ceiling (default 52pt; UI 48–54)
       "hymn_font_min":  48,   # lyrics auto-fit floor — never smaller than 48pt
       "hymn_margin_in": 0.83,
       "call_font":      "DFKai-SB",   # global typeface for all text
@@ -130,7 +130,7 @@ def normalize_week(w):
     psalm["layout"] = _reading_layout(psalm.get("layout"))
     w["psalm"] = psalm
 
-    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 48)
+    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 52)
     w["hymn_font_min"] = _num(w.get("hymn_font_min"), 48)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
     w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))

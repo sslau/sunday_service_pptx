@@ -1717,6 +1717,7 @@ def _song_font_selector(label, hint=None):
     c2.selectbox(
         "歌詞字級",
         options=options,
+        index=options.index(cur),
         format_func=lambda v: f"{v} pt",
         key=K("hymn_font_max"),
         label_visibility="collapsed")
