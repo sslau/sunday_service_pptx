@@ -27,7 +27,7 @@ _SLIDE_H_IN = 7.5
 _MARGIN_IN = 0.83
 _BG = "#1F3A6E"           # mirrors _new_slide default
 _TEXT = "#FFFFFF"
-_PT_SCALE = 96.0 / (72.0 * _SLIDE_W_IN)  # px-per-pt-per-frame-width
+_PT_SCALE = 1.0 / (72.0 * _SLIDE_W_IN)  # px-per-pt-per-frame-width
 
 _FONT_CANDIDATES = [
     os.path.join(HERE, "fonts", "NotoSansCJKsc-Regular.otf"),
@@ -55,7 +55,7 @@ def _cjk_font_path():
 def _load_font(pt, width):
     """PIL font for a given pptx pt size at frame width `width` (px).
     16:9 slide 13.333in wide: 1pt = width/13.333/72 px."""
-    px = max(1, round(pt * width / _SLIDE_W_IN / 72.0 * 96.0))
+    px = max(1, round(pt * width * _PT_SCALE))
     path = _cjk_font_path()
     if path is None:
         return ImageFont.load_default()
@@ -186,6 +186,18 @@ def _render_pptx_text(img, tf, box, sc, width):
         y += lh
 
 
+def _slide_bg(slide):
+    """Slide's solid background colour as '#RRGGBB', or None when it has none
+    (the renderer then falls back to the default navy)."""
+    try:
+        fill = slide.background.fill
+        if fill.type == MSO_FILL_TYPE.SOLID:
+            return "#%s" % str(fill.fore_color.rgb)
+    except Exception:
+        pass
+    return None
+
+
 def render_pptx_slide(data, index, width=1920):
     """Rasterize one slide of an uploaded .pptx at `width` px, honouring the
     slide geometry: solid fills, pictures at their real boxes, and every text
@@ -198,7 +210,7 @@ def render_pptx_slide(data, index, width=1920):
         width += 1
     height = max(1, round(width * sh / sw))
     sc = width / sw
-    img = Image.new("RGB", (width, height), _BG)
+    img = Image.new("RGB", (width, height), _slide_bg(slide) or _BG)
     fills, pics, texts = [], [], []
     for shp in slide.shapes:
         try:

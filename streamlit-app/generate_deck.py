@@ -1371,11 +1371,12 @@ def _response_slide_count(cfg):
 
 def build_section_deck(section, cfg, template=None):
     """Compile one section as its own standalone 16:9 deck:
-    section = "hymns" | "sermon" | "announcements" | "scripture" | "response".  The result
-    is exactly what build() would insert between the fixed header slides, so
-    the section deck can be handed to someone else and merged by uploading it.
-    ``scripture`` is a separate workflow: verse slides only (讀經), no service
-    headers, for people who just want the 經文 on its own."""
+    section = "hymns" | "sermon" | "announcements" | "scripture" | "psalm" |
+    "response".  The result is exactly what build() would insert between the
+    fixed header slides, so the section deck can be handed to someone else and
+    merged by uploading it.  ``scripture`` (讀經) and ``psalm`` (宣召經文) are
+    reading-only workflows: verse slides only, no service headers, for people
+    who just want the 經文 on its own."""
     template = template or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "blank_16x9.pptx")
     pres = Presentation(template)
@@ -1395,11 +1396,20 @@ def build_section_deck(section, cfg, template=None):
                                         or cfg.get("scripture_font_size", 44))),
                             sc.get("ref_size", 48), typeface,
                             whole_verses=(sc.get("layout") != "paragraph"))
+    elif section == "psalm":
+        psalm = cfg.get("psalm", {}) or {}
+        if psalm.get("verses"):
+            typeface = cfg.get("call_font", "DFKai-SB")
+            _reading_slides(pres, psalm.get("ref"), " ".join(psalm["verses"]),
+                            max(44, int(psalm.get("font_size")
+                                        or cfg.get("psalm_font_size", 44))),
+                            psalm.get("ref_size", 48), typeface,
+                            whole_verses=(psalm.get("layout") != "paragraph"))
     elif section == "response":
         build_response_section(pres, cfg)
     else:
         raise ValueError("unknown section: %r (use hymns|sermon|"
-                         "announcements|scripture)" % section)
+                         "announcements|scripture|psalm|response)" % section)
     return pres
 
 

@@ -73,7 +73,13 @@ buttons at the top let you jump around in **any order**; below are "⬅ 上一�
 **global typeface** (DFKai-SB / PMingLiU / JhengHei / DengXian / LiSu), applied
 to all slide text.
 
+> Each section below includes a **slide demo animation (GIF)** built from the
+> `demo_week.json` sample (3 s per slide, looping forever). Regenerate with your
+> own data via `make_section_gifs.py`.
+
 ### Step 1 · Call to Worship (宣召經文)
+
+![Call to Worship slides demo](user_guide_assets/section_psalm.gif)
 
 - **書卷 (Book):** picking a book fills the FHL book code into **出處
   (Reference)**; you can also type the reference directly, e.g. `詩篇 34:1-3`
@@ -101,6 +107,8 @@ to all slide text.
   `psalm_<date>.pptx` to replace the compiled output.
 
 ### Step 2 · Hymns (詩歌敬拜)
+
+![Hymns slides demo](user_guide_assets/section_hymns.gif)
 
 Each hymn keeps its lyrics in **one editor box**, shown right inside the card.
 What you type is what lands on the slides: **a blank line separates slides; each
@@ -153,11 +161,15 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 
 ### Step 4 · Scripture Reading (讀經經文)
 
+![Scripture reading slides demo](user_guide_assets/section_scripture.gif)
+
 - Identical controls to the Call to Worship (book dropdown, translation, fhl.net
   fetch, fonts, paragraph/list layout, auto-splitting); the reading is just
   usually longer.
 
 ### Step 5 · Sermon (講道信息)
+
+![Sermon slides demo](user_guide_assets/section_sermon.gif)
 
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
   `sermon_<date>.pptx` from OneDrive.
@@ -165,6 +177,8 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   (when the week already has any).
 
 ### Step 6 · Response Hymn (詩歌回應)
+
+![Response hymn slides demo](user_guide_assets/section_response.gif)
 
 - **Optional:** skip with "下一步" when not needed (the section is not added).
 - A single response hymn with the same fields as Hymns: **one lyric editor box**
@@ -186,6 +200,8 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   Communion + Creed pair (and is used even when the checkbox is off).
 
 ### Step 8 · Announcements (家事分享)
+
+![Announcements slides demo](user_guide_assets/section_announcements.gif)
 
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
   `announcements_<date>.pptx` from OneDrive; "📋 產生家事分享投影片" compiles it
