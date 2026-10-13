@@ -53,6 +53,10 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 5. 左側按「💾 儲存目前內容」，再按「📽 製成整場投影片」。
 6. 按「⬇️ 下載 PPTX」取得 `Sunday_Service_<日期>.pptx`。
 
+下圖為實際操作示範：沿上方 9 個步驟逐節瀏覽，最後切到「📽 製作成投影片」分頁（每張停留 3 秒、循環播放）。
+
+![崇拜投影片編輯器操作示範](user_guide_assets/ui_walkthrough.gif)
+
 ---
 
 ## 3. 編輯內容（分頁一）
@@ -62,12 +66,7 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 （DFKai-SB 標楷體／PMingLiU 新細明體／JhengHei 正黑體／DengXian 等線體／
 LiSu 隸書），套用到所有投影片文字。
 
-> 以下各節附有**投影片示範動畫（GIF）**，以 `demo_week.json` 示範資料產生（每張
-> 停留 3 秒、循環播放）；可用 `make_section_gifs.py` 以實際資料重新產生。
-
 ### 步驟 1 · 宣召經文
-
-![宣召經文投影片示範](user_guide_assets/section_psalm.gif)
 
 - **書卷**：下拉選擇會自動把 FHL 書卷碼填入「出處」；也可直接在「出處」鍵入，
   例如 `詩篇 34:1-3`。
@@ -88,8 +87,6 @@ LiSu 隸書），套用到所有投影片文字。
   `psalm_<日期>.pptx` 直接取代排版輸出。
 
 ### 步驟 2 · 詩歌敬拜（Hymns）
-
-![詩歌敬拜投影片示範](user_guide_assets/section_hymns.gif)
 
 每首詩歌的歌詞放在**一個編輯框**裡，直接顯示在卡片內。**每個空行分隔的一段＝
 一張 slide，段內每行＝一句**；框內會顯示目前共幾段，輸入即時生效——不需要再按
@@ -130,21 +127,15 @@ LiSu 隸書），套用到所有投影片文字。
 
 ### 步驟 4 · 讀經經文
 
-![讀經投影片示範](user_guide_assets/section_scripture.gif)
-
 - 操作與「宣召經文」完全相同（書卷下拉、譯本、從 fhl.net 抓取、字型、整段／
   列表排版、自動分頁）；差別是經文通常較長。
 
 ### 步驟 5 · 講道信息（Sermon）
 
-![講道投影片示範](user_guide_assets/section_sermon.gif)
-
 - 此節**以現成 `.pptx` 為準**：在此上載，或從 OneDrive 讀取 `sermon_<日期>.pptx`。
 - 「🗣 產生講道投影片」會把目前網頁上的講道內容編譯成獨立檔（若該週已有內容）。
 
 ### 步驟 6 · 詩歌回應（Response Hymn）
-
-![詩歌回應投影片示範](user_guide_assets/section_response.gif)
 
 - **可選**：不需要時直接按「下一步」略過（此節不加入）。
 - 單首回應詩歌，欄位與「詩歌敬拜」相同：**一個歌詞編輯框**（空行分段＝一張
@@ -163,8 +154,6 @@ LiSu 隸書），套用到所有投影片文字。
   使徒信經兩頁（此時即使未勾選聖餐也會採用該檔）。
 
 ### 步驟 8 · 家事分享（Announcements）
-
-![家事分享投影片示範](user_guide_assets/section_announcements.gif)
 
 - 此節**以現成 `.pptx` 為準**：在此上載，或從 OneDrive 讀取
   `announcements_<日期>.pptx`；也可按「📋 產生家事分享投影片」用網頁內容編譯。
