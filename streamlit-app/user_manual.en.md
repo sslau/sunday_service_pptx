@@ -80,8 +80,9 @@ buttons at the top let you jump around in **any order**; below are "⬅ 上一�
 to all slide text.
 
 > Each section below includes an **app-interface demo (GIF)** showing that
-> step's actual screen in the app, scrolled top-to-bottom and looping.
-> Regenerate with `make_ui_section_gifs.py`.
+> step's actual screen in the app (the Hymns one walks the whole workflow:
+> lyric search → whole song → import → background → slide preview), looping
+> forever. Regenerate with `make_ui_section_gifs.py` / `make_ui_hymn_demo_gif.py`.
 
 ### Step 1 · Call to Worship (宣召經文)
 
@@ -115,6 +116,9 @@ to all slide text.
 ### Step 2 · Hymns (詩歌敬拜)
 
 ![Hymns UI demo](user_guide_assets/section_hymns.gif)
+
+> Demo flow: search "中國啊" → open the whole song → import it → pick a
+> background → generate that hymn's slide preview.
 
 Each hymn keeps its lyrics in **one editor box**, shown right inside the card.
 What you type is what lands on the slides: **a blank line separates slides; each
