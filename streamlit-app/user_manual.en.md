@@ -119,9 +119,9 @@ to all slide text.
 
 ![Hymns UI demo](user_guide_assets/section_hymns.gif)
 
-> Demo flow: search "獻給我天上的主" → open the whole song → import it (7 段) →
-> pick a background → generate that hymn's slide preview → download & view the
-> generated deck.
+> Demo flow: search "每一天" → pick "88每一天88 · 美樂頌" from the 結果 list →
+> open the whole song → import it → pick a background → generate that hymn's
+> slide preview → download & view the generated deck.
 
 Each hymn keeps its lyrics in **one editor box**, shown right inside the card.
 What you type is what lands on the slides: **a blank line separates slides; each
@@ -130,7 +130,7 @@ and changes apply immediately — no separate import button, no per-stanza boxes
 Add a stanza by leaving a blank line, delete one by clearing it.
 
 - **歌詞庫搜尋 (Lyric-library search)** inside each hymn card:
-  - Type keywords, e.g. "獻給我天上的主" or "讓我們 愛". **Space-separated terms must all
+  - Type keywords, e.g. "每一天" or "讓我們 愛". **Space-separated terms must all
     appear on the same slide**; matching ignores punctuation and spaces, so
     lines/sentences broken across slides still match.
   - Results are **grouped by song** (a song appears once), showing

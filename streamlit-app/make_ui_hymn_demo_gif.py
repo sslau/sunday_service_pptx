@@ -4,9 +4,9 @@
 looping GIF for the user manual:
 
     1. open step 2 and expand 🔍 歌詞庫搜尋
-    2. search the lyric library (default term 中國啊)
-    3. what the 結果 row shows
-    4. 👁 看全首歌詞 pop-up
+    2. search the lyric library (default term 每一天)
+    3. open the 結果 dropdown to show every matching song, then pick one
+    4. the 👁 看全首歌詞 pop-up (opens automatically when a result is picked)
     5. ⬇️ 匯入整首詩歌 — lyrics + metadata land in the editor
     6. 🎨 背景圖 — pick a background thumbnail
     7. ▶ 預覽這首詩歌的 slides → 🎬 產生這首詩歌的 slide
@@ -26,10 +26,25 @@ from io import BytesIO
 
 from PIL import Image
 
+from ui_gif_cursor import draw_click, quantize_with_markers
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 os.chdir(HERE)
+
+_DSF = 2                       # device_scale_factor used for the page
+_PENDING = {"xy": None}        # click point for the next grab()
+
+
+def _mark(loc):
+    """Remember a locator's centre so the next grab() can flag the click."""
+    try:
+        bb = loc.bounding_box()
+    except Exception:
+        bb = None
+    if bb:
+        _PENDING["xy"] = (bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
 
 
 def expand(page, text):
@@ -37,6 +52,7 @@ def expand(page, text):
     loc = page.locator('summary:has-text("%s")' % text).first
     if loc.count():
         loc.scroll_into_view_if_needed()
+        _mark(loc)
         loc.click()
         page.wait_for_timeout(1200)
 
@@ -45,6 +61,7 @@ def click(page, text, nth=0):
     loc = page.locator('button:has-text("%s")' % text).nth(nth)
     if loc.count():
         loc.scroll_into_view_if_needed()
+        _mark(loc)
         loc.click()
         return True
     return False
@@ -52,16 +69,24 @@ def click(page, text, nth=0):
 
 def grab(page, shots, tag):
     page.wait_for_timeout(600)
-    shots.append((tag, Image.open(BytesIO(page.screenshot())).convert("RGB")))
+    img = Image.open(BytesIO(page.screenshot())).convert("RGB")
+    xy = _PENDING.get("xy")
+    if xy:
+        img = draw_click(img, xy[0] * _DSF, xy[1] * _DSF, scale=_DSF)
+        _PENDING["xy"] = None
+    shots.append((tag, img))
 
 
-def download_slides(page, args):
+def download_slides(page, args, shots):
     """Click the hymn download button, then rasterize the .pptx it returns."""
     loc = page.locator('button:has-text("%s")' % args.dl_label).first
     if not loc.count():
         print("no download button; skipping slide frames")
         return []
     loc.scroll_into_view_if_needed()
+    if shots is not None:                      # frame with the hand on the button
+        _mark(loc)
+        grab(page, shots, "download")
     with page.expect_download(timeout=args.timeout) as dl_info:
         loc.click()
     path = dl_info.value.path()
@@ -86,6 +111,8 @@ def capture(page, args):
     grab(page, shots, "search-open")
 
     box = page.get_by_label(args.search_label).first
+    box.scroll_into_view_if_needed()
+    _mark(box)
     box.click()
     box.fill(args.term)
     box.press("Enter")
@@ -93,7 +120,47 @@ def capture(page, args):
     box.scroll_into_view_if_needed()
     grab(page, shots, "search-results")
 
-    if click(page, "看全首歌詞"):
+    # open the 結果 dropdown so every matching song is listed, then pick one
+    sel = page.locator('[data-testid="stSelectbox"]').filter(
+        has=page.locator('label:has-text("%s")' % args.results_label)).first
+    trig = sel.locator('[data-baseweb="select"]').first
+    trig.scroll_into_view_if_needed()
+    _mark(trig)
+    trig.click()
+    page.wait_for_timeout(1200)
+    hit, picked = None, ""
+    pick = page.locator('[role="option"]').filter(has_text=args.pick)
+    if args.pick_book:
+        pick = pick.filter(has_text=args.pick_book)
+    if pick.count():
+        hit = pick.first
+        hit.scroll_into_view_if_needed()
+        picked = hit.inner_text().splitlines()[0]
+        _mark(hit)
+    grab(page, shots, "results-list")
+    if hit is not None:
+        hit.scroll_into_view_if_needed()
+        hit.click()
+        page.wait_for_timeout(3000)
+    chosen = sel.inner_text().splitlines()[-1].strip() if sel.count() else ""
+    print("picked: %s  ->  selected: %s" % (picked[:60], chosen[:60]))
+    if args.pick not in chosen:                 # fall back: keyboard-filter
+        sel.locator('[data-baseweb="select"]').first.click()
+        page.wait_for_timeout(600)
+        page.keyboard.type(args.pick)
+        page.wait_for_timeout(1200)
+        page.locator('[role="option"]:has-text("%s")' % args.pick).first.click()
+        page.wait_for_timeout(3000)
+        chosen = sel.inner_text().splitlines()[-1].strip() if sel.count() else ""
+        print("re-selected: %s" % chosen[:60])
+
+    # picking a result pops the full-lyrics dialog open by itself
+    dlg = page.locator('[data-testid="stDialog"], [role="dialog"]')
+    if dlg.count():
+        grab(page, shots, "whole-song")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(1200)
+    elif click(page, "看全首歌詞"):
         page.wait_for_timeout(1500)
         grab(page, shots, "whole-song")
         page.keyboard.press("Escape")
@@ -112,6 +179,7 @@ def capture(page, args):
     cbs = bg.locator('[data-testid="stCheckbox"]')
     if cbs.count() > args.bg_index:
         cbs.nth(args.bg_index).scroll_into_view_if_needed()
+        _mark(cbs.nth(args.bg_index))
         cbs.nth(args.bg_index).click()
         page.wait_for_timeout(2500)
     grab(page, shots, "background")
@@ -122,7 +190,7 @@ def capture(page, args):
     page.locator('summary:has-text("預覽這首詩歌的 slide")').first.scroll_into_view_if_needed()
     grab(page, shots, "preview")
 
-    for i, img in enumerate(download_slides(page, args), 1):
+    for i, img in enumerate(download_slides(page, args, shots), 1):
         shots.append(("slide-%d" % i, img))
     return shots
 
@@ -141,7 +209,7 @@ def write_gif(frames, path, width, seconds, colors):
     """Downscale every frame to `width`, pad to a common size, write a GIF."""
     first = frames[0][1]
     size = (width, round(first.height * width / first.width))
-    pals = [fit(img, size).quantize(colors=colors, method=Image.MEDIANCUT)
+    pals = [quantize_with_markers(fit(img, size), colors)
             for _tag, img in frames]
     pals[0].save(path, save_all=True, append_images=pals[1:],
                  duration=int(round(seconds * 1000)), loop=0,
@@ -153,8 +221,14 @@ def main():
         description="Record the full hymn workflow to a looping GIF.")
     parser.add_argument("--url", default="http://localhost:8501")
     parser.add_argument("--out", default="user_guide_assets/section_hymns.gif")
-    parser.add_argument("--term", default="中國啊", help="lyric search term")
+    parser.add_argument("--term", default="每一天", help="lyric search term")
     parser.add_argument("--search-label", default="搜尋歌詞")
+    parser.add_argument("--results-label", default="結果",
+                        help="label of the song-results dropdown")
+    parser.add_argument("--pick", default="88每一天88",
+                        help="title of the result to select")
+    parser.add_argument("--pick-book", default="美樂頌",
+                        help="collection shown in the result label")
     parser.add_argument("--bg-index", type=int, default=1,
                         help="which background thumbnail to pick (default 1)")
     parser.add_argument("--dl-label", default="下載這首詩歌的 pptx",

@@ -1452,7 +1452,8 @@ def _hymn_preview_html(preview):
             f'<div style="font-weight:700;font-size:.8rem;color:var(--accent);'
             f'border-bottom:1px solid var(--line);padding-bottom:.3rem;'
             f'margin-bottom:.4rem">Slide {i}</div>'
-            + "".join(body) + "</div>")
+            '<div style="text-align:center">'
+            + "".join(body) + "</div></div>")
     return ('<div style="display:flex;flex-wrap:wrap;gap:10px">'
             + "".join(cards) + "</div>")
 

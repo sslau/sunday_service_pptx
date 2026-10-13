@@ -5,7 +5,7 @@ manual — this is the scripture page that can actually *download* a deck:
 
     1. open the standalone 經文投影片 flow
     2. pick 書卷 from the book dropdown (filtered by typing)
-    3. type the 出處 verses, e.g. 詩篇 34:1-3
+    3. type the 出處 verses, e.g. 詩篇 34:1-10
     4. 從 fhl.net 聖經網輸入 — the verses land in 內容
     4. 📜 製成經文投影片 pptx → ⬇️ 下載經文投影片 pptx
     5. rasterize every slide of the downloaded .pptx (the finished deck)
@@ -24,16 +24,32 @@ from io import BytesIO
 
 from PIL import Image
 
+from ui_gif_cursor import draw_click, quantize_with_markers
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 os.chdir(HERE)
+
+_DSF = 2                       # device_scale_factor used for the page
+_PENDING = {"xy": None}        # click point for the next grab()
+
+
+def _mark(loc):
+    """Remember a locator's centre so the next grab() can flag the click."""
+    try:
+        bb = loc.bounding_box()
+    except Exception:
+        bb = None
+    if bb:
+        _PENDING["xy"] = (bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
 
 
 def click(page, text, nth=0):
     loc = page.locator('button:has-text("%s")' % text).nth(nth)
     if loc.count():
         loc.scroll_into_view_if_needed()
+        _mark(loc)
         loc.click()
         return True
     return False
@@ -41,16 +57,24 @@ def click(page, text, nth=0):
 
 def grab(page, shots, tag):
     page.wait_for_timeout(600)
-    shots.append((tag, Image.open(BytesIO(page.screenshot())).convert("RGB")))
+    img = Image.open(BytesIO(page.screenshot())).convert("RGB")
+    xy = _PENDING.get("xy")
+    if xy:
+        img = draw_click(img, xy[0] * _DSF, xy[1] * _DSF, scale=_DSF)
+        _PENDING["xy"] = None
+    shots.append((tag, img))
 
 
-def download_slides(page, args):
+def download_slides(page, args, shots):
     """Click the scripture download button, then rasterize the .pptx."""
     loc = page.locator('button:has-text("%s")' % args.dl_label).first
     if not loc.count():
         print("no download button; skipping slide frames")
         return []
     loc.scroll_into_view_if_needed()
+    if shots is not None:                      # frame with the hand on the button
+        _mark(loc)
+        grab(page, shots, "download")
     with page.expect_download(timeout=args.timeout) as dl_info:
         loc.click()
     path = dl_info.value.path()
@@ -76,17 +100,22 @@ def capture(page, args):
     # 1) pick the book from the 書卷 dropdown (type to filter the virtual list)
     sb = page.get_by_label(args.book_label).first
     sb.scroll_into_view_if_needed()
+    _mark(sb)
     sb.click()
     sb.fill(args.book)
     page.wait_for_timeout(1200)
     grab(page, shots, "book-dropdown")
 
-    page.locator('[role="option"]:has-text("%s")' % args.book).first.click()
+    opt = page.locator('[role="option"]:has-text("%s")' % args.book).first
+    _mark(opt)
+    opt.click()
     page.wait_for_timeout(2000)
     grab(page, shots, "book-picked")
 
     # 2) type the chapter:verse into 出處
     ref = page.get_by_label(args.ref_label).first
+    ref.scroll_into_view_if_needed()
+    _mark(ref)
     ref.click()
     ref.fill(args.ref)
     ref.press("Enter")
@@ -111,7 +140,7 @@ def capture(page, args):
     grab(page, shots, "generated")
 
     # 5) download it and animate every slide of the finished deck
-    for i, img in enumerate(download_slides(page, args), 1):
+    for i, img in enumerate(download_slides(page, args, shots), 1):
         shots.append(("slide-%d" % i, img))
     return shots
 
@@ -129,7 +158,7 @@ def fit(img, size, bg=(255, 255, 255)):
 def write_gif(frames, path, width, seconds, colors):
     first = frames[0][1]
     size = (width, round(first.height * width / first.width))
-    pals = [fit(img, size).quantize(colors=colors, method=Image.MEDIANCUT)
+    pals = [quantize_with_markers(fit(img, size), colors)
             for _tag, img in frames]
     pals[0].save(path, save_all=True, append_images=pals[1:],
                  duration=int(round(seconds * 1000)), loop=0,
@@ -142,7 +171,7 @@ def main():
     parser.add_argument("--url", default="http://localhost:8501")
     parser.add_argument("--out", default="user_guide_assets/section_scripture.gif")
     parser.add_argument("--book", default="詩篇", help="book to pick in 書卷")
-    parser.add_argument("--ref", default="詩篇 34:1-3", help="出處 to fetch")
+    parser.add_argument("--ref", default="詩篇 34:1-10", help="出處 to fetch")
     parser.add_argument("--book-label", default="書卷")
     parser.add_argument("--ref-label", default="出處")
     parser.add_argument("--open-label", default="獨立流程")
