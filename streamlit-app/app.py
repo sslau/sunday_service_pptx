@@ -1701,9 +1701,12 @@ def _layout_radio(key):
 
 
 def _song_font_options(cur):
-    """歌詞字級選項：48–54pt；舊週次存有範圍外的值時一併補進，避免 selectbox
-    因值不在清單而報錯。"""
-    return sorted(set(range(48, 55)) | {cur})
+    """歌詞字級選項：52pt（預設，置頂）往下遞減至 48pt。舊週次存有範圍外的
+    數值時一併補進，避免 selectbox 因值不在清單而報錯。"""
+    opts = list(range(52, 47, -1))          # 52, 51, 50, 49, 48
+    if cur not in opts:
+        opts.append(int(cur))
+    return opts
 
 
 def _song_font_selector(label, hint=None):
@@ -2831,7 +2834,7 @@ with tab_edit:
                         key=K("hymn_text_shadow"))
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="固定字級（預設 52pt、可選 48–54pt），不隨行長縮小；"
+                hint="固定字級（預設 52pt、可選 48–52pt），不隨行長縮小；"
                      "行太長時自動換行。"
                      "標點符號以空格取代（如「，」「。」→ 空白）。"
                      "每首詩歌可用下方「背景圖」各自指定背景。")

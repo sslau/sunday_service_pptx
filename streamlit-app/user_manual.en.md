@@ -127,7 +127,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   thumbnail** to apply it (one per hymn; the first cell "依序" = the default
   `media/song_bg1…` order). You can also upload a new background, or drop an
   image into `media/` (named `song_bg*.jpg` and it appears in the strip).
-- **歌詞字級 (pt) (Lyric font size):** fixed size (**default 52pt**, 48–54pt
+- **歌詞字級 (pt) (Lyric font size):** fixed size (**default 52pt**, 48–52pt
   selectable; it does not shrink to fit; long lines wrap).
 - **歌詞文字加上陰影 (Text shadow):** keeps lyrics readable over background
   images and is written into the deck.
