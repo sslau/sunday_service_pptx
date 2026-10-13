@@ -243,7 +243,7 @@ and per-section "generate" actions live inside the Edit-content steps.)
 When everything looks right, click "📽 製成整場投影片（合併＋編譯）" in the
 sidebar. On success you'll see "完成：N 頁" and a "⬇️ 下載 PPTX" button below.
 
-- **🔍 整場檢查（讀經↔講道 · 詩歌頁數＋歌詞＋用字 · 第一主日樣板） (Sanity check —
+- **🔍 檢查整場投影片 (Check the whole deck) (Sanity check —
   Reading↔Sermon · Song length + lyrics + wording · First-Sunday templates):**
   after building, click this button to check at once:
   - **Reading ↔ Sermon reference:** that the 讀經經文 (Scripture reading)

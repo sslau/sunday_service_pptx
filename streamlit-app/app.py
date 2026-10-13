@@ -3264,7 +3264,7 @@ with gen_slot:
                    "檔案在瀏覽器下載，不會儲存在Server。")
 
     st.divider()
-    if st.button("🔍 整場檢查（讀經↔講道 · 詩歌頁數＋歌詞＋用字＋重複 · 第一主日樣板）",
+    if st.button("🔍 檢查整場投影片",
                  key=K("sanity_check"), use_container_width=True,
                  help="比對「讀經經文」與「講道信息」的經文出處、檢查所有詩歌"
                       "（詩歌敬拜／獻詩／詩歌回應）至少 4 頁（含標題卡）、"
