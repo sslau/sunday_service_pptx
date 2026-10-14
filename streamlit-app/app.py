@@ -91,26 +91,45 @@ def _auth_ok():
     return bool(st.session_state.get("auth_ok", False))
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# Headers a proxy / load balancer adds.  Their presence means the request did
+# not come straight from a browser on this machine.
+_FORWARD_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+                    "x-real-ip", "forwarded")
+
+
+def _host_only(value):
+    """``example.com:443`` / ``user@host`` -> lowercase ``example.com``."""
+    value = (value or "").rsplit("@", 1)[-1]
+    return value.rsplit(":", 1)[0].strip("[]").lower()
+
+
 def _is_local():
     """True when the browser is on this machine, so the password gate is skipped.
 
-    Streamlit reports the client IP and gives ``None`` for loopback
-    (127.0.0.1 / ::1).  That is the signal to trust here: running the app on the
-    presenter's own machine should not ask for the password.  The Host header is
-    only a fallback when the IP is unavailable.  This is a convenience, not a
-    security boundary — the header can be spoofed.
+    This deliberately does NOT use ``st.context.ip_address``: behind a proxy or
+    load balancer — which is exactly what Streamlit Community Cloud is — that
+    value is always ``None`` (Streamlit never enables Tornado's ``xheaders``),
+    so ``None`` does not mean "loopback" there.  Treating it as local is what
+    silently disabled the password gate on the deployed app.  Instead we trust
+    only the browser-set ``Host`` / ``Origin`` headers, and refuse to call a
+    request local if any forwarding header shows a proxy is in the way.  This is
+    a convenience, not a security boundary — the headers can be spoofed.
     """
     try:
-        if st.context.ip_address is None:
-            return True
+        headers = {str(k).lower(): str(v)
+                   for k, v in dict(st.context.headers or {}).items()}
     except Exception:
-        pass
-    try:
-        host = dict(st.context.headers or {}).get("Host") or ""
-    except Exception:
-        host = ""
-    host = host.rsplit("@", 1)[-1].rsplit(":", 1)[0].strip("[]").lower()
-    return host in {"localhost", "127.0.0.1", "::1"}
+        return False
+    if any(headers.get(h) for h in _FORWARD_HEADERS):
+        return False
+    if _host_only(headers.get("host")) not in _LOOPBACK_HOSTS:
+        return False
+    origin = headers.get("origin") or ""
+    if origin and _host_only(origin.split("://", 1)[-1].split("/", 1)[0]) \
+            not in _LOOPBACK_HOSTS:
+        return False
+    return True
 
 
 def sv(name, default=""):
@@ -154,6 +173,16 @@ if not _auth_ok():
     if _is_local():
         # On the presenter's own machine (loopback): no password needed.
         st.session_state["auth_ok"] = True
+    elif APP_PASSWORD is None:
+        # A password is required off-loopback, so an unconfigured deployment is
+        # locked rather than left open.  Set `app_password` in the deployment's
+        # secrets (Streamlit Cloud: Settings → Secrets).
+        with st.container(border=True):
+            st.subheader("🔒 崇拜投影片編輯器")
+            st.error("此 App 未設定 `app_password`，為安全起見已停用。請在 "
+                     "Streamlit Cloud 的 Settings → Secrets 加入 "
+                     "`app_password = \"你的密碼\"`，儲存後重新啟動 App。")
+        st.stop()
     else:
         with st.container(border=True):
             st.subheader("🔒 崇拜投影片編輯器 — 請登入")
@@ -163,15 +192,7 @@ if not _auth_ok():
                 submitted = st.form_submit_button("登入", type="primary")
         if submitted:
             meta = _request_meta()
-            ok = False
-            if APP_PASSWORD is None:
-                st.warning("尚未設定 app_password（在 Settings → Secrets）。"
-                           "未設定密碼前先放行。")
-                ok = True
-            elif sv("gate_password") == APP_PASSWORD:
-                ok = True
-            else:
-                st.error("密碼錯誤，請重試。")
+            ok = sv("gate_password") == APP_PASSWORD
             login_log.append_login("success" if ok else "failed", **meta,
                                    secrets=st_secrets)
             if ok:
@@ -181,6 +202,8 @@ if not _auth_ok():
                                       ua=meta.get("ua", ""), secrets=st_secrets)
                 st.session_state["auth_ok"] = True
                 st.rerun()
+            else:
+                st.error("密碼錯誤，請重試。")
         st.stop()
 
 

@@ -19,14 +19,15 @@ PowerPoint install and no local server required.
 ## 1. Getting started
 
 1. Open the app URL in a browser.
-2. If `app_password` is set, a **login screen** appears first; type the password
-   and press "登入" (Log in) or Enter.
+2. A deployed app **always asks for the password first**; type the password and
+   press "登入" (Log in) or Enter.
    - The password is set in `.streamlit/secrets.toml` (`app_password`), and on
      Streamlit Cloud under Settings → Secrets.
+   - **A deployment must set `app_password`**; without it, opening the app off
+     this machine is locked with a prompt to configure it.
    - Opening the app on the same machine (**`localhost` / `127.0.0.1` / `::1`)
      skips the password**. The password gate is a convenience, not a security
      boundary, because the host header can be spoofed.
-   - With no `app_password` set, the app stays open but shows a reminder.
    - Each login attempt is written to the `logs` worksheet; a summary of
      important actions per login session goes to the `sessions` worksheet
      (login time, IP, action count, running summary).

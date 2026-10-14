@@ -15,11 +15,11 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 ## 1. 開始使用
 
 1. 用瀏覽器開啟 App 網址。
-2. 若設定了 `app_password`，會先出現**登入畫面**，輸入密碼後按「登入」或 Enter。
+2. 部署的 App 一定**先出現登入畫面**，輸入密碼後按「登入」或 Enter。
    - 密碼設在 `.streamlit/secrets.toml` 的 `app_password`（部署時貼到
      Streamlit Cloud 的 Settings → Secrets）。
+   - **部署時必須設定 `app_password`**；未設定時，非本機開啟會被鎖住並提示設定。
    - 在本機（`localhost` / `127.0.0.1` / `::1`）開啟時會**直接略過密碼**。
-   - 未設定 `app_password` 時 App 保持開放，但會顯示提醒。
    - 每次登入成敗會寫入 Google 試算表的 `logs` 分頁；每個登入階段的重要動作
      會彙整到 `sessions` 分頁（登入時間、IP、動作數與摘要）。
 3. 進入後停在「✏️ 編輯內容」分頁，預設為**最新**的主日日期；若還沒有資料，

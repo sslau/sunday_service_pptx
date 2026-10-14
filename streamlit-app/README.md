@@ -72,8 +72,9 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
    （欄位：date | json | updatedAt）。
 4. `streamlit.community.cloud` → New app → 連接該 repo，選 `app.py`。
 5. Settings → Secrets：貼上 `.streamlit/secrets.toml` 的內容。
-6. **登入密碼**：編輯器在進入前有一道密碼鎖。在 Secrets 貼上
-   `app_password = "你的密碼"` 即可啟用；未設定時 app 保持開放但會顯示提醒。
+6. **登入密碼**：編輯器在進入前有一道密碼鎖，**部署時必須設定**。在 Secrets
+   貼上 `app_password = "你的密碼"`；未設定時，非本機（部署）開啟會被鎖住並
+   提示設定，本機（`localhost`）則照常略過。
    （`secrets.toml` 被 .gitignore 排除，密碼不會進 repo。）
 7. Deploy。App 的帳號／權限由 Community Cloud 控制（app 可設為 private，
    加上 `allowed_users` 或直接鎖給自己）。
