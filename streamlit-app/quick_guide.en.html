@@ -13,9 +13,13 @@
     color: #1a202c; font-size: 9.2pt; line-height: 1.4;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .head { display: flex; align-items: center; gap: 10px;
-          border-bottom: 3px solid #2b6cb0; padding-bottom: 6px; margin-bottom: 10px; }
+  .head { display: flex; align-items: center; justify-content: space-between;
+          gap: 14px; border-bottom: 3px solid #2b6cb0;
+          padding-bottom: 6px; margin-bottom: 10px; }
+  .head-main { display: flex; align-items: center; gap: 10px; }
   .head .logo { font-size: 26pt; line-height: 1; }
+  .head-shot { width: 285px; height: auto; flex: none; border: 1px solid #cbd5e0;
+               border-radius: 6px; }
   h1 { font-size: 16pt; margin: 0; color: #2b6cb0; letter-spacing: .3px; }
   .sub { margin: 3px 0 0; color: #4a5568; font-size: 9.2pt; }
   .cols { display: grid; grid-template-columns: 1fr 1.12fr; gap: 16px; }
@@ -36,9 +40,6 @@
   .pills span { display: inline-block; background: #fff; border: 1px solid #ecc94b;
           border-radius: 999px; padding: 1px 9px; margin: 3px 5px 0 0; font-size: 8.7pt;
           color: #744210; }
-  .order { margin-top: 10px; padding: 7px 10px; background: #f0f5fb;
-           border-radius: 8px; font-size: 9pt; color: #2c5282; }
-  .order h2 { border-color: #2b6cb0; margin-bottom: 4px; }
   .foot { margin-top: 9px; border-top: 1px solid #e2e8f0; padding-top: 6px;
           color: #718096; font-size: 8.2pt; }
 </style>
@@ -46,13 +47,17 @@
 <body>
 
   <div class="head">
-    <div class="logo">📽</div>
-    <div>
-      <h1>Sunday Service Slides Editor · One-Page Guide</h1>
-      <p class="sub">Edit each Sunday's worship content in the browser and build &amp;
-      download the whole-service PowerPoint (<code>.pptx</code>) in one click.
-      No PowerPoint install, no local server.</p>
+    <div class="head-main">
+      <div class="logo">📽</div>
+      <div>
+        <h1>Sunday Service Slides Editor · One-Page Guide</h1>
+        <p class="sub">Edit each Sunday's worship content in the browser and build &amp;
+        download the whole-service PowerPoint (<code>.pptx</code>) in one click.
+        No PowerPoint install, no local server.</p>
+      </div>
     </div>
+    <img class="head-shot" src="user_guide_assets/pptx_builder_demo.png"
+         alt="App interface">
   </div>
 
   <div class="cols">
@@ -152,13 +157,6 @@
       <span>6 Response Hymn</span>
       <span>8 Announcements</span>
     </div>
-  </div>
-
-  <div class="order">
-    <h2>📑 Page order of the full-service deck</h2>
-    <div>Welcome → Call to Worship → Hymns → Prayer / Lord's Prayer → Offering (if any)
-      → Scripture → Sermon → Response Hymn (if used) → Communion + Apostles' Creed
-      (if ticked) → Doxology / Benediction → Announcements → End</div>
   </div>
 
   <div class="foot">

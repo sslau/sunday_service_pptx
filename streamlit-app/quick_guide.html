@@ -13,9 +13,13 @@
     color: #1a202c; font-size: 10.2pt; line-height: 1.5;
     -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-  .head { display: flex; align-items: center; gap: 10px;
-          border-bottom: 3px solid #2b6cb0; padding-bottom: 6px; margin-bottom: 10px; }
+  .head { display: flex; align-items: center; justify-content: space-between;
+          gap: 14px; border-bottom: 3px solid #2b6cb0;
+          padding-bottom: 6px; margin-bottom: 10px; }
+  .head-main { display: flex; align-items: center; gap: 10px; }
   .head .logo { font-size: 26pt; line-height: 1; }
+  .head-shot { width: 330px; height: auto; flex: none; border: 1px solid #cbd5e0;
+               border-radius: 6px; }
   h1 { font-size: 17pt; margin: 0; color: #2b6cb0; letter-spacing: .5px; }
   .sub { margin: 3px 0 0; color: #4a5568; font-size: 9.5pt; }
   .cols { display: grid; grid-template-columns: 1fr 1.12fr; gap: 16px; }
@@ -36,9 +40,6 @@
   .pills span { display: inline-block; background: #fff; border: 1px solid #ecc94b;
           border-radius: 999px; padding: 1px 9px; margin: 3px 5px 0 0; font-size: 9pt;
           color: #744210; }
-  .order { margin-top: 11px; padding: 7px 10px; background: #f0f5fb;
-           border-radius: 8px; font-size: 9.4pt; color: #2c5282; }
-  .order h2 { border-color: #2b6cb0; margin-bottom: 4px; }
   .foot { margin-top: 9px; border-top: 1px solid #e2e8f0; padding-top: 6px;
           color: #718096; font-size: 8.4pt; }
 </style>
@@ -46,12 +47,16 @@
 <body>
 
   <div class="head">
-    <div class="logo">📽</div>
-    <div>
-      <h1>崇拜投影片編輯器 · 一頁指南</h1>
-      <p class="sub">用瀏覽器編輯每個主日的崇拜內容，一按產生並下載整場 PowerPoint（
-      <code>.pptx</code>）。無需安裝 PowerPoint，也無需自設伺服器。</p>
+    <div class="head-main">
+      <div class="logo">📽</div>
+      <div>
+        <h1>崇拜投影片編輯器 · 一頁指南</h1>
+        <p class="sub">用瀏覽器編輯每個主日的崇拜內容，一按產生並下載整場 PowerPoint（
+        <code>.pptx</code>）。無需安裝 PowerPoint，也無需自設伺服器。</p>
+      </div>
     </div>
+    <img class="head-shot" src="user_guide_assets/pptx_builder_demo.png"
+         alt="App 介面">
   </div>
 
   <div class="cols">
@@ -132,13 +137,6 @@
       <span>6 詩歌回應</span>
       <span>8 家事分享</span>
     </div>
-  </div>
-
-  <div class="order">
-    <h2>📑 整場投影片頁面順序</h2>
-    <div>開場 → 宣召經文 → 詩歌敬拜 → 禱告／主禱文 → 獻詩（若有） → 讀經經文 →
-      講道信息 → 詩歌回應（若使用） → 聖餐＋使徒信經（若勾選） → 三一頌／祝福 →
-      家事分享 → 結束</div>
   </div>
 
   <div class="foot">
