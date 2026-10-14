@@ -1595,6 +1595,12 @@ div[data-testid="stExpander"] > details[open] > summary
 .steps .step.active { background:var(--accent); color:#fff;
   box-shadow:0 5px 14px rgba(63,91,139,.3); }
 .steps .step.wait { opacity:.75; }
+/* Section demo GIF inside the 操作示範 dialog: never let it spill off the
+   screen on a laptop. */
+div[role="dialog"] img, div[data-testid="stModal"] img {
+  display:block; margin:0 auto;
+  width:auto !important; height:auto !important;
+  max-width:100%; max-height:58vh; }
 </style>
 """
 
@@ -1624,10 +1630,10 @@ def demo_gif(key):
     return path if os.path.isfile(path) else None
 
 
-@st.dialog("操作示範", width="large")
+@st.dialog("操作示範", width="medium")
 def _demo_dialog(path, title):
     st.caption(f"{title} · 操作示範（循環播放）")
-    st.image(path, width="stretch")
+    st.image(path)
 
 
 def section_header(num, title, subtitle="", demo=None):
