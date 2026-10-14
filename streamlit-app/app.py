@@ -1595,12 +1595,14 @@ div[data-testid="stExpander"] > details[open] > summary
 .steps .step.active { background:var(--accent); color:#fff;
   box-shadow:0 5px 14px rgba(63,91,139,.3); }
 .steps .step.wait { opacity:.75; }
-/* Section demo GIF inside the 操作示範 dialog: never let it spill off the
-   screen on a laptop. */
+/* Section demo GIF inside the 操作示範 dialog: a roomy modal that still
+   never spills off a laptop screen. */
+div[role="dialog"] { width: min(1040px, 94vw) !important;
+                     max-width: 94vw; }
 div[role="dialog"] img, div[data-testid="stModal"] img {
   display:block; margin:0 auto;
   width:auto !important; height:auto !important;
-  max-width:100%; max-height:58vh; }
+  max-width:100%; max-height:calc(100vh - 210px); }
 </style>
 """
 
