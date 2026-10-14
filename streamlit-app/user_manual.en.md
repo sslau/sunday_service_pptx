@@ -14,8 +14,9 @@ PowerPoint install and no local server required.
 > section currently works mainly by uploading a ready-made file (see each
 > section).
 >
-> **One-page guide (printable / PDF):** `quick_guide.pdf`, generated from
-> `quick_guide.html` with `python make_quick_guide_pdf.py`.
+> **One-page guide (printable / PDF):** `quick_guide.en.pdf` (繁中:
+> `quick_guide.pdf`), generated from `quick_guide.en.html` / `quick_guide.html`
+> with `python make_quick_guide_pdf.py`.
 
 ---
 

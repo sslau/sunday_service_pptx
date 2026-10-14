@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sunday Service Slides Editor · One-Page Guide</title>
+<style>
+  @page { size: A4; margin: 12mm 13mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "Helvetica Neue", "PingFang TC", "Heiti TC",
+                 "Microsoft JhengHei", Arial, sans-serif;
+    color: #1a202c; font-size: 9.4pt; line-height: 1.42;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .head { display: flex; align-items: center; gap: 10px;
+          border-bottom: 3px solid #2b6cb0; padding-bottom: 6px; margin-bottom: 10px; }
+  .head .logo { font-size: 26pt; line-height: 1; }
+  h1 { font-size: 16pt; margin: 0; color: #2b6cb0; letter-spacing: .3px; }
+  .sub { margin: 3px 0 0; color: #4a5568; font-size: 9.2pt; }
+  .cols { display: grid; grid-template-columns: 1fr 1.12fr; gap: 16px; }
+  .sec { margin-bottom: 9px; }
+  h2 { font-size: 10.6pt; margin: 0 0 5px; padding-left: 8px;
+       border-left: 4px solid #2b6cb0; color: #2c5282; }
+  ol, ul { margin: 0; padding-left: 17px; }
+  li { margin-bottom: 3.5px; }
+  .steps li { margin-bottom: 5px; }
+  .chips { margin: 5px 0 0; padding: 5px 8px; background: #f0f5fb; border-radius: 6px;
+           color: #2c5282; font-size: 8.5pt; }
+  b { color: #1a202c; }
+  code { background: #edf2f7; padding: 0 3px; border-radius: 3px; font-size: 8.8pt; }
+  .demo { margin-top: 11px; background: #fffbeb; border: 1.5px solid #ecc94b;
+          border-radius: 8px; padding: 9px 12px; }
+  .demo h2 { border-color: #d69e2e; color: #975a16; }
+  .pills { margin-top: 4px; }
+  .pills span { display: inline-block; background: #fff; border: 1px solid #ecc94b;
+          border-radius: 999px; padding: 1px 9px; margin: 3px 5px 0 0; font-size: 8.7pt;
+          color: #744210; }
+  .order { margin-top: 10px; padding: 7px 10px; background: #f0f5fb;
+           border-radius: 8px; font-size: 9pt; color: #2c5282; }
+  .order h2 { border-color: #2b6cb0; margin-bottom: 4px; }
+  .foot { margin-top: 9px; border-top: 1px solid #e2e8f0; padding-top: 6px;
+          color: #718096; font-size: 8.2pt; }
+</style>
+</head>
+<body>
+
+  <div class="head">
+    <div class="logo">📽</div>
+    <div>
+      <h1>Sunday Service Slides Editor · One-Page Guide</h1>
+      <p class="sub">Edit each Sunday's worship content in the browser and build &amp;
+      download the whole-service PowerPoint (<code>.pptx</code>) in one click.
+      No PowerPoint install, no local server.</p>
+    </div>
+  </div>
+
+  <div class="cols">
+    <!-- Left: steps + tabs -->
+    <div>
+      <div class="sec">
+        <h2>🚀 Quick start (6 steps)</h2>
+        <ol class="steps">
+          <li>Open the app URL and enter the <b>password</b> to log in.</li>
+          <li>Pick the <b>service date</b> on the left; if the week is missing, use
+              「＋ 新增週次」 and enter <code>YYYY.MM.DD</code>.</li>
+          <li>On the 「✏️ 編輯內容」 (Edit content) tab, fill the sections with the
+              <b>nine step buttons</b> at the top (<b>any order works</b>).</li>
+          <li>Click 「<b>💾 儲存目前內容</b>」 (Save current content) on the left.</li>
+          <li>Click 「<b>📽 製成整場投影片（合併＋編譯）</b>」 (Generate full service).</li>
+          <li>Click 「<b>⬇️ 下載 PPTX</b>」 (Download) to get
+              <code>Sunday_Service_&lt;date&gt;.pptx</code>.</li>
+        </ol>
+        <div class="chips">
+          <b>The nine sections:</b> 1 Call to Worship · 2 Hymns · 3 Offering ·
+          4 Scripture · 5 Sermon · 6 Response Hymn · 7 Communion ·
+          8 Announcements · 9 Announcements MP4
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>🗂 The two tabs</h2>
+        <ul>
+          <li><b>✏️ 編輯內容 (Edit content)</b>: a guided wizard, one section at a
+              time; choose the service-wide font at the top.</li>
+          <li><b>📽 製作成投影片 (Build slides)</b>: check each section's source
+              (upload / cloud / web content), then build and download the service.</li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h2>💾 Save reminder</h2>
+        <ul>
+          <li>While you type, edits live in the browser session only — <b>save
+              (💾 儲存目前內容) before switching dates or logging back in.</b></li>
+          <li>Week content lives in Google Sheets (falls back to a local file);
+              fetching scripture from fhl.net auto-saves once.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Right: features -->
+    <div>
+      <div class="sec">
+        <h2>⭐ Main features</h2>
+        <ul>
+          <li><b>Scripture fetch &amp; auto-pagination</b>: pick a book from the
+              dropdown and type a reference (e.g. <code>詩篇 34:1-3</code>), then
+              fetch from fhl.net in one click; multi-book, cross-chapter,
+              和合本 / 和修版 / 新譯本; auto-splits by font size and never breaks
+              mid-punctuation.</li>
+          <li><b>Hymns &amp; Response Hymn</b>: built-in 4-book lyric library
+              (教會聖詩 · 粵語其他詩歌 · 美樂頌 · 輔助本); search, import a whole
+              hymn, choose a background image, add a text shadow, lyric size
+              48–52pt.</li>
+          <li><b>Upload or fetch from OneDrive</b>: any section accepts a
+              ready-made <code>.pptx</code> (the file wins), or fetch standard
+              names from OneDrive (<code>psalm_</code> / <code>sermon_</code> /
+              <code>announcements_</code>…).</li>
+          <li><b>Communion / Apostles' Creed</b>: tick to include;
+              auto-ticked on the <b>first Sunday</b> of the month.</li>
+          <li><b>Announcements MP4</b>: upload a video or build one in the app;
+              it can be merged as page 1 of the service to loop until clicked.</li>
+          <li><b>🔍 Check full-service deck</b>: verifies the scripture ↔ sermon
+              reference, hymn page counts (≥ 4 pages each), lyric/typo comparison
+              against the hymn library, and the first-Sunday communion template.</li>
+          <li><b>Scripture-only flow</b>: builds just
+              <code>scripture_&lt;date&gt;.pptx</code>; not part of the full
+              service and not saved to Sheets.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo">
+    <h2>🎬 Watch the demos (highly recommended)</h2>
+    <div>
+      Sections that have a demo show a 「<b>🎬 看操作示範</b>」 (Watch demo) button
+      next to the title; clicking it <b>loops</b> that section's real workflow in a
+      pop-up (~3 s per frame). Watch first, then follow along — the fastest way to
+      learn.
+    </div>
+    <div class="pills">
+      Demos available:
+      <span>1 Call to Worship</span>
+      <span>2 Hymns</span>
+      <span>4 Scripture</span>
+      <span>5 Sermon (OneDrive pick)</span>
+      <span>6 Response Hymn</span>
+      <span>8 Announcements</span>
+    </div>
+  </div>
+
+  <div class="order">
+    <h2>📑 Page order of the full-service deck</h2>
+    <div>Welcome → Call to Worship → Hymns → Prayer / Lord's Prayer → Offering (if any)
+      → Scripture → Sermon → Response Hymn (if used) → Communion + Apostles' Creed
+      (if ticked) → Doxology / Benediction → Announcements → End</div>
+  </div>
+
+  <div class="foot">
+    App: https://eccsundayservicepptx.streamlit.app　·　Full docs: <b>User guide</b>
+    (<code>user_manual.en.md</code> English ／ <code>user_manual.md</code> 繁中)
+  </div>
+
+</body>
+</html>

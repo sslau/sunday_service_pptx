@@ -10,8 +10,9 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 > 本文件對應目前程式碼的功能。若畫面上找不到某個按鈕，代表該節目前是以上載
 > 現成檔案為主（見各節說明）。
 >
-> **一頁速覽（可列印／存 PDF）**：`quick_guide.pdf`；來源為 `quick_guide.html`，
-> 改版後執行 `python make_quick_guide_pdf.py` 重新產生。
+> **一頁速覽（可列印／存 PDF）**：`quick_guide.pdf`（English：`quick_guide.en.pdf`）；
+> 來源為 `quick_guide.html`／`quick_guide.en.html`，改版後執行
+> `python make_quick_guide_pdf.py` 重新產生。
 
 ---
 
