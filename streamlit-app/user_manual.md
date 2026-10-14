@@ -72,6 +72,10 @@ LiSu 隸書），套用到所有投影片文字。
 > 載入 → 產生並下載經文投影片。可用 `make_ui_section_gifs.py`、
 > `make_ui_call_to_worship_demo_gif.py`、`make_ui_hymn_demo_gif.py`、
 > `make_ui_scripture_demo_gif.py` 重新產生。
+>
+> 應用程式內亦會在**有示範的節**標題下方顯示「🎬 看操作示範」按鈕，
+> 按下後以彈出視窗循環播放該節的 GIF；沒有示範的節（獻詩、聖餐、家事MP4）
+> 不會顯示按鈕。
 
 ### 步驟 1 · 宣召經文
 

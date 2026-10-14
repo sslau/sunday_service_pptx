@@ -88,6 +88,11 @@ to all slide text.
 > Regenerate with `make_ui_section_gifs.py` /
 > `make_ui_call_to_worship_demo_gif.py` / `make_ui_hymn_demo_gif.py` /
 > `make_ui_scripture_demo_gif.py`.
+>
+> The app itself also shows a "🎬 看操作示範" button under the title of every
+> section that has a demo; click it to watch that section's GIF loop in a modal
+> dialog. Sections without a demo (Offering, Communion, Announcements-MP4)
+> show no button.
 
 ### Step 1 · Call to Worship (宣召經文)
 

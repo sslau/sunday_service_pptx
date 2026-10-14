@@ -1603,12 +1603,43 @@ def _inject_css():
     st.markdown(_CSS, unsafe_allow_html=True)
 
 
-def section_header(num, title, subtitle=""):
+# Operation-demo GIFs shipped in `user_guide_assets/`.  A section only shows a
+# 「看操作示範」 button when its clip is actually present.
+DEMO_GIFS = {
+    "psalm": "section_call_to_worship.gif",
+    "hymns": "section_hymns.gif",
+    "scripture": "section_scripture.gif",
+    "sermon": "section_sermon.gif",
+    "response": "section_response.gif",
+    "announcements": "section_announcements.gif",
+}
+
+
+def demo_gif(key):
+    """Path to a section's demo GIF, or None when that clip is not shipped."""
+    name = DEMO_GIFS.get(key)
+    if not name:
+        return None
+    path = os.path.join(HERE, "user_guide_assets", name)
+    return path if os.path.isfile(path) else None
+
+
+@st.dialog("操作示範", width="large")
+def _demo_dialog(path, title):
+    st.caption(f"{title} · 操作示範（循環播放）")
+    st.image(path, width="stretch")
+
+
+def section_header(num, title, subtitle="", demo=None):
     sub = f'<div class="sec-sub">{subtitle}</div>' if subtitle else ""
     st.markdown(
         f'<div class="sec-head"><span class="sec-num">{num}</span>'
         f'<span class="sec-title">{title}</span></div>{sub}',
         unsafe_allow_html=True)
+    path = demo_gif(demo) if demo else None
+    if path and st.button("🎬 看操作示範", key=K(f"demo_{demo}"),
+                          help="以動畫示範這一節的操作步驟"):
+        _demo_dialog(path, title)
 
 
 def _fetch_into(ref_key, target_key, section=None):
@@ -2694,7 +2725,8 @@ def _render_scr_flow():
     _font_radio("經文投影片使用的字型", K("scrflow_font"))
 
     with st.container(border=True):
-        section_header("1", "經文投影片", "輸入出處一鍵載入，或直接貼上整段經文")
+        section_header("1", "經文投影片", "輸入出處一鍵載入，或直接貼上整段經文",
+                       demo="scripture")
         _scripture_editor("scrflow")
 
     st.divider()
@@ -2811,8 +2843,8 @@ tab_edit, tab_build = st.tabs(["✏️ 編輯內容", "📽 製作成投影片"]
 with tab_edit:
     st.markdown(
         f'<div class="hero"><div class="hero-date">主日：{DATE}</div>'
-        f'<div class="hero-sub">崇拜投影片編輯器 · 內容自動儲存至 Google Sheet'
-        f'</div></div>', unsafe_allow_html=True)
+        f'<div class="hero-sub">崇拜投影片編輯器</div></div>',
+        unsafe_allow_html=True)
 
     step = _edit_step()
 
@@ -2836,7 +2868,8 @@ with tab_edit:
 
     if step == 1:
         with st.container(border=True):
-            section_header("1", "宣召經文", "貼上整段經文，自動分頁")
+            section_header("1", "宣召經文", "貼上整段經文，自動分頁",
+                           demo="psalm")
             _odrive_panel("psalm", "宣召經文")
             if not _cloud_deck_status("psalm", "宣召經文"):
                 st.caption("尚未讀取 `psalm_<日期>.pptx`；下方仍可直接貼上經文"
@@ -2845,7 +2878,7 @@ with tab_edit:
 
     elif step == 2:
         with st.container(border=True):
-            section_header("2", "詩歌敬拜（Hymns）")
+            section_header("2", "詩歌敬拜（Hymns）", demo="hymns")
             _odrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
                                f"songs_slides_{DATE}.pptx",
@@ -2987,7 +3020,8 @@ with tab_edit:
 
     elif step == 4:
         with st.container(border=True):
-            section_header("4", "讀經經文", "貼上整段經文，自動分頁")
+            section_header("4", "讀經經文", "貼上整段經文，自動分頁",
+                           demo="scripture")
             _odrive_panel("scripture", "讀經經文")
             if not _cloud_deck_status("scripture", "讀經經文"):
                 st.caption("尚未讀取 `scripture_<日期>.pptx`；下方仍可直接貼上經文"
@@ -2996,7 +3030,7 @@ with tab_edit:
 
     elif step == 5:
         with st.container(border=True):
-            section_header("5", "講道信息（Sermon）")
+            section_header("5", "講道信息（Sermon）", demo="sermon")
             _odrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
                                f"sermon_{DATE}.pptx",
@@ -3008,7 +3042,7 @@ with tab_edit:
     elif step == 6:
         with st.container(border=True):
             section_header("6", "詩歌回應（Response Hymn）",
-                           "單首回應詩歌，緊接信息之後（可選）")
+                           "單首回應詩歌，緊接信息之後（可選）", demo="response")
             _odrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
                                f"response_{DATE}.pptx",
@@ -3058,7 +3092,8 @@ with tab_edit:
 
     elif step == 8:
         with st.container(border=True):
-            section_header("8", "家事分享（Announcements）")
+            section_header("8", "家事分享（Announcements）",
+                           demo="announcements")
             _odrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
