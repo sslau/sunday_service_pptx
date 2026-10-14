@@ -1631,15 +1631,24 @@ def _demo_dialog(path, title):
 
 
 def section_header(num, title, subtitle="", demo=None):
-    sub = f'<div class="sec-sub">{subtitle}</div>' if subtitle else ""
-    st.markdown(
-        f'<div class="sec-head"><span class="sec-num">{num}</span>'
-        f'<span class="sec-title">{title}</span></div>{sub}',
-        unsafe_allow_html=True)
+    head = (f'<div class="sec-head"><span class="sec-num">{num}</span>'
+            f'<span class="sec-title">{title}</span></div>')
     path = demo_gif(demo) if demo else None
-    if path and st.button("🎬 看操作示範", key=K(f"demo_{demo}"),
-                          help="以動畫示範這一節的操作步驟"):
-        _demo_dialog(path, title)
+    if path:
+        # badge + title + 「看操作示範」 on one row, the button tucked right
+        # after the title; the subtitle stays below.
+        with st.container(horizontal=True, vertical_alignment="center",
+                          gap="small"):
+            st.markdown(head, unsafe_allow_html=True)
+            if st.button("🎬 看操作示範", key=K(f"demo_{demo}"),
+                         type="tertiary",
+                         help="以動畫示範這一節的操作步驟"):
+                _demo_dialog(path, title)
+    else:
+        st.markdown(head, unsafe_allow_html=True)
+    if subtitle:
+        st.markdown(f'<div class="sec-sub">{subtitle}</div>',
+                    unsafe_allow_html=True)
 
 
 def _fetch_into(ref_key, target_key, section=None):
