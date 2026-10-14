@@ -66,12 +66,13 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 （DFKai-SB 標楷體／PMingLiU 新細明體／JhengHei 正黑體／DengXian 等線體／
 LiSu 隸書），套用到所有投影片文字。
 
-> 以下各節附有 **App 介面操作示範（GIF）**，循環播放；宣召經文、詩歌敬拜與讀經三節
-> 示範完整流程——宣召經文：書卷搜尋 → 出處 `詩 100:1-5` → 從 fhl.net 載入；詩歌敬拜：
+> 以下各節附有 **App 介面操作示範（GIF）**，循環播放；宣召經文、詩歌敬拜、讀經與講道
+> 四節示範完整流程——宣召經文：書卷搜尋 → 出處 `詩 100:1-5` → 從 fhl.net 載入；詩歌敬拜：
 > 搜尋歌詞 → 匯入 → 選背景 → 產生與下載投影片；讀經：輸入書卷／出處 → 從 fhl.net
-> 載入 → 產生並下載經文投影片。可用 `make_ui_section_gifs.py`、
-> `make_ui_call_to_worship_demo_gif.py`、`make_ui_hymn_demo_gif.py`、
-> `make_ui_scripture_demo_gif.py` 重新產生。
+> 載入 → 產生並下載經文投影片；講道：展開「🌐 從 OneDrive 讀取講道投影片」→ 從清單
+> 選取講道檔。可用 `make_ui_section_gifs.py`、`make_ui_call_to_worship_demo_gif.py`、
+> `make_ui_hymn_demo_gif.py`、`make_ui_scripture_demo_gif.py`、
+> `make_ui_sermon_demo_gif.py` 重新產生。
 >
 > 應用程式內亦會在**有示範的節**標題下方顯示「🎬 看操作示範」按鈕，
 > 按下後以彈出視窗循環播放該節的 GIF；沒有示範的節（獻詩、聖餐、家事MP4）
@@ -159,6 +160,8 @@ LiSu 隸書），套用到所有投影片文字。
 
 ![講道介面示範](user_guide_assets/section_sermon.gif)
 
+- 上圖示範從 OneDrive 挑選講道檔：展開「🌐 從 OneDrive 讀取講道投影片」→ 於清單
+  選取該週檔案（例：`sermons_20260920.pptx`）→ 再按「⚡ 從 OneDrive 讀取並儲存」。
 - 此節**以現成 `.pptx` 為準**：在此上載，或從 OneDrive 讀取 `sermon_<日期>.pptx`。
 - 「🗣 產生講道投影片」會把目前網頁上的講道內容編譯成獨立檔（若該週已有內容）。
 

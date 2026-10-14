@@ -27,10 +27,11 @@ from PIL import Image
 # 宣召經文 (step 1) is not captured here: its demo GIF is produced by
 # make_ui_call_to_worship_demo_gif.py, which drives the 書卷 search + 出處 +
 # fhl.net fetch interaction instead of just scrolling the panel.
+# 講道 (step 5) is likewise skipped: make_ui_sermon_demo_gif.py records the
+# 從 OneDrive file picker instead of just scrolling the panel.
 SECTIONS = [
     ("2 詩歌", "hymns"),
     ("4 讀經", "scripture"),
-    ("5 講道", "sermon"),
     ("6 詩歌回應", "response"),
     ("8 家事分享", "announcements"),
 ]

@@ -81,13 +81,14 @@ buttons at the top let you jump around in **any order**; below are "⬅ 上一�
 to all slide text.
 
 > Each section below includes an **app-interface demo (GIF)**, looping forever.
-> Call to Worship, Hymns and Scripture show the full workflow: Call to Worship —
-> search the 書卷 list → 出處 詩 100:1-5 → load from fhl.net; Hymns — lyric search
-> → import → background → generate & download the deck; Scripture — enter a
-> book/verse → load from fhl.net → generate and download the scripture deck.
+> Call to Worship, Hymns, Scripture and Sermon show the full workflow: Call to
+> Worship — search the 書卷 list → 出處 詩 100:1-5 → load from fhl.net; Hymns —
+> lyric search → import → background → generate & download the deck; Scripture —
+> enter a book/verse → load from fhl.net → generate and download the scripture
+> deck; Sermon — open the 從 OneDrive panel → pick the week's deck.
 > Regenerate with `make_ui_section_gifs.py` /
 > `make_ui_call_to_worship_demo_gif.py` / `make_ui_hymn_demo_gif.py` /
-> `make_ui_scripture_demo_gif.py`.
+> `make_ui_scripture_demo_gif.py` / `make_ui_sermon_demo_gif.py`.
 >
 > The app itself also shows a "🎬 看操作示範" button under the title of every
 > section that has a demo; click it to watch that section's GIF loop in a modal
@@ -195,6 +196,9 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 
 ![Sermon UI demo](user_guide_assets/section_sermon.gif)
 
+- The GIF shows picking the sermon deck from OneDrive: open 從 OneDrive 讀取講道投影片
+  → choose the week's file in the list (e.g. `sermons_20260920.pptx`) → then press
+  ⚡ 從 OneDrive 讀取並儲存.
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
   `sermon_<date>.pptx` from OneDrive.
 - "🗣 產生講道投影片" compiles a standalone file from the page's sermon content
