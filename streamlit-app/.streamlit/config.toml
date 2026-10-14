@@ -5,3 +5,11 @@ backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F4F6FA"
 textColor = "#1E2430"
 font = "sans serif"
+
+# Never render exception tracebacks in the browser. The password gate runs
+# after the store/secret setup, so an early error could otherwise expose paths
+# or configuration details to an unauthenticated visitor. Errors still reach
+# the server logs (Streamlit Cloud: Manage app → logs). To debug locally,
+# temporarily set this to "full".
+[client]
+showErrorDetails = "none"
