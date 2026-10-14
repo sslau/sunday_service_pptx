@@ -13,6 +13,9 @@ PowerPoint install and no local server required.
 > This document matches the current code. If a button is not on screen, that
 > section currently works mainly by uploading a ready-made file (see each
 > section).
+>
+> **One-page guide (printable / PDF):** `quick_guide.pdf`, generated from
+> `quick_guide.html` with `python make_quick_guide_pdf.py`.
 
 ---
 

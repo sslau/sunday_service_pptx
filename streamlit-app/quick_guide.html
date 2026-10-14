@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>崇拜投影片編輯器 · 一頁指南</title>
+<style>
+  @page { size: A4; margin: 12mm 13mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang TC", "Heiti TC", "Microsoft JhengHei",
+                 "Noto Sans TC", sans-serif;
+    color: #1a202c; font-size: 10.2pt; line-height: 1.5;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .head { display: flex; align-items: center; gap: 10px;
+          border-bottom: 3px solid #2b6cb0; padding-bottom: 6px; margin-bottom: 10px; }
+  .head .logo { font-size: 26pt; line-height: 1; }
+  h1 { font-size: 17pt; margin: 0; color: #2b6cb0; letter-spacing: .5px; }
+  .sub { margin: 3px 0 0; color: #4a5568; font-size: 9.5pt; }
+  .cols { display: grid; grid-template-columns: 1fr 1.12fr; gap: 16px; }
+  .sec { margin-bottom: 9px; }
+  h2 { font-size: 11pt; margin: 0 0 5px; padding-left: 8px;
+       border-left: 4px solid #2b6cb0; color: #2c5282; }
+  ol, ul { margin: 0; padding-left: 17px; }
+  li { margin-bottom: 3.5px; }
+  .steps li { margin-bottom: 5px; }
+  .chips { margin: 5px 0 0; padding: 5px 8px; background: #f0f5fb; border-radius: 6px;
+           color: #2c5282; font-size: 8.8pt; }
+  b { color: #1a202c; }
+  code { background: #edf2f7; padding: 0 3px; border-radius: 3px; font-size: 9pt; }
+  .demo { margin-top: 12px; background: #fffbeb; border: 1.5px solid #ecc94b;
+          border-radius: 8px; padding: 9px 12px; }
+  .demo h2 { border-color: #d69e2e; color: #975a16; }
+  .pills { margin-top: 4px; }
+  .pills span { display: inline-block; background: #fff; border: 1px solid #ecc94b;
+          border-radius: 999px; padding: 1px 9px; margin: 3px 5px 0 0; font-size: 9pt;
+          color: #744210; }
+  .order { margin-top: 11px; padding: 7px 10px; background: #f0f5fb;
+           border-radius: 8px; font-size: 9.4pt; color: #2c5282; }
+  .order h2 { border-color: #2b6cb0; margin-bottom: 4px; }
+  .foot { margin-top: 9px; border-top: 1px solid #e2e8f0; padding-top: 6px;
+          color: #718096; font-size: 8.4pt; }
+</style>
+</head>
+<body>
+
+  <div class="head">
+    <div class="logo">📽</div>
+    <div>
+      <h1>崇拜投影片編輯器 · 一頁指南</h1>
+      <p class="sub">用瀏覽器編輯每個主日的崇拜內容，一按產生並下載整場 PowerPoint（
+      <code>.pptx</code>）。無需安裝 PowerPoint，也無需自設伺服器。</p>
+    </div>
+  </div>
+
+  <div class="cols">
+    <!-- Left: steps + tabs -->
+    <div>
+      <div class="sec">
+        <h2>🚀 快速上手（6 步）</h2>
+        <ol class="steps">
+          <li>開啟 App 網址，輸入<b>密碼</b>登入。</li>
+          <li>左側選<b>主日日期</b>；沒有該週就用「＋ 新增週次」輸入 <code>YYYY.MM.DD</code>。</li>
+          <li>在「✏️ 編輯內容」分頁，用最上方 <b>9 個步驟按鈕</b>逐節填寫（<b>可任意順序</b>）。</li>
+          <li>按左側「<b>💾 儲存目前內容</b>」。</li>
+          <li>按「<b>📽 製成整場投影片（合併＋編譯）</b>」。</li>
+          <li>按「<b>⬇️ 下載 PPTX</b>」取得 <code>Sunday_Service_&lt;日期&gt;.pptx</code>。</li>
+        </ol>
+        <div class="chips">
+          <b>九個步驟：</b>1 宣召經文 · 2 詩歌敬拜 · 3 獻詩 · 4 讀經經文 ·
+          5 講道信息 · 6 詩歌回應 · 7 聖餐 · 8 家事分享 · 9 家事MP4
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>🗂 兩個分頁</h2>
+        <ul>
+          <li><b>✏️ 編輯內容</b>：以嚮導逐節填寫；最上方可選全場統一使用的字型。</li>
+          <li><b>📽 製作成投影片</b>：檢視每節的來源（上載／雲端／網頁內容），一按產生整場並下載。</li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h2>💾 儲存提示</h2>
+        <ul>
+          <li>打字時內容先存在瀏覽器工作階段；<b>切換日期或重新登入前，請先按「💾 儲存目前內容」</b>。</li>
+          <li>週次內容存於 Google 試算表（未設定時退回本機檔案）；用 fhl.net 抓取經文會自動儲存一次。</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Right: features -->
+    <div>
+      <div class="sec">
+        <h2>⭐ 主要功能</h2>
+        <ul>
+          <li><b>經文自動抓取與分頁</b>：書卷下拉＋出處（如 <code>詩篇 34:1-3</code>），
+              一鍵從信望愛（fhl.net）下載經文；支援多卷、跨章、和合本／和修版／新譯本；
+              依字型自動分頁，換頁不落在標點中間。</li>
+          <li><b>詩歌敬拜／詩歌回應</b>：內建 4 本詩集歌詞庫（教會聖詩、粵語其他詩歌、
+              美樂頌、輔助本），可搜尋、匯入整首、選背景圖、加陰影、歌詞字級 48–52pt。</li>
+          <li><b>上載或從 OneDrive 讀取</b>：任何一節都可上載現成 <code>.pptx</code>
+              （以檔案為準），或從 OneDrive 讀取標準檔名（<code>psalm_</code>／
+              <code>sermon_</code>／<code>announcements_</code>…）。</li>
+          <li><b>聖餐／使徒信經</b>：勾選即加入；<b>當月第一主日</b>自動預設。</li>
+          <li><b>家事分享 MP4</b>：上載或於 App 內產生影片，可併入整場第一頁自動循環播放。</li>
+          <li><b>🔍 檢查整場投影片</b>：核對讀經↔講道出處、詩歌頁數（每首至少 4 頁）、
+              歌詞與詩集用字、第一主日樣板。</li>
+          <li><b>經文投影片（獨立流程）</b>：只產生 <code>scripture_&lt;日期&gt;.pptx</code>，
+              不影響整場、不存入試算表。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo">
+    <h2>🎬 觀看操作示範（強烈建議先看）</h2>
+    <div>
+      有示範的節，標題旁會出現「<b>🎬 看操作示範</b>」按鈕；按下即以彈出視窗<b>循環播放</b>
+      該節的實際操作畫面（每格約 3 秒、自動重播）——先看示範、再照著做，最快上手。
+    </div>
+    <div class="pills">
+      已提供示範：
+      <span>1 宣召經文</span>
+      <span>2 詩歌敬拜</span>
+      <span>4 讀經</span>
+      <span>5 講道（OneDrive 選檔）</span>
+      <span>6 詩歌回應</span>
+      <span>8 家事分享</span>
+    </div>
+  </div>
+
+  <div class="order">
+    <h2>📑 整場投影片頁面順序</h2>
+    <div>開場 → 宣召經文 → 詩歌敬拜 → 禱告／主禱文 → 獻詩（若有） → 讀經經文 →
+      講道信息 → 詩歌回應（若使用） → 聖餐＋使徒信經（若勾選） → 三一頌／祝福 →
+      家事分享 → 結束</div>
+  </div>
+
+  <div class="foot">
+    App：https://eccsundayservicepptx.streamlit.app　·　完整說明：<b>使用手冊</b>
+    （<code>user_manual.md</code> 繁中 ／ <code>user_manual.en.md</code> English）
+  </div>
+
+</body>
+</html>
