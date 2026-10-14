@@ -66,14 +66,16 @@ Streamlit 網頁版。用瀏覽器編輯每個主日的崇拜內容，直接在�
 （DFKai-SB 標楷體／PMingLiU 新細明體／JhengHei 正黑體／DengXian 等線體／
 LiSu 隸書），套用到所有投影片文字。
 
-> 以下各節附有 **App 介面操作示範（GIF）**，循環播放；詩歌敬拜與讀經兩節示範完整
-> 流程——詩歌敬拜：搜尋歌詞 → 匯入 → 選背景 → 產生與下載投影片；讀經：輸入書卷／
-> 出處 → 從 fhl.net 載入 → 產生並下載經文投影片。可用 `make_ui_section_gifs.py`、
-> `make_ui_hymn_demo_gif.py`、`make_ui_scripture_demo_gif.py` 重新產生。
+> 以下各節附有 **App 介面操作示範（GIF）**，循環播放；宣召經文、詩歌敬拜與讀經三節
+> 示範完整流程——宣召經文：書卷搜尋 → 出處 `詩 100:1-5` → 從 fhl.net 載入；詩歌敬拜：
+> 搜尋歌詞 → 匯入 → 選背景 → 產生與下載投影片；讀經：輸入書卷／出處 → 從 fhl.net
+> 載入 → 產生並下載經文投影片。可用 `make_ui_section_gifs.py`、
+> `make_ui_call_to_worship_demo_gif.py`、`make_ui_hymn_demo_gif.py`、
+> `make_ui_scripture_demo_gif.py` 重新產生。
 
 ### 步驟 1 · 宣召經文
 
-![宣召經文介面示範](user_guide_assets/section_psalm.gif)
+![宣召經文介面示範](user_guide_assets/section_call_to_worship.gif)
 
 - **書卷**：下拉選擇會自動把 FHL 書卷碼填入「出處」；也可直接在「出處」鍵入，
   例如 `詩篇 34:1-3`。

@@ -81,15 +81,17 @@ buttons at the top let you jump around in **any order**; below are "⬅ 上一�
 to all slide text.
 
 > Each section below includes an **app-interface demo (GIF)**, looping forever.
-> Hymns and Scripture show the full workflow: Hymns — lyric search → import →
-> background → generate & download the deck; Scripture — enter a book/verse →
-> load from fhl.net → generate and download the scripture deck. Regenerate with
-> `make_ui_section_gifs.py` / `make_ui_hymn_demo_gif.py` /
+> Call to Worship, Hymns and Scripture show the full workflow: Call to Worship —
+> search the 書卷 list → 出處 詩 100:1-5 → load from fhl.net; Hymns — lyric search
+> → import → background → generate & download the deck; Scripture — enter a
+> book/verse → load from fhl.net → generate and download the scripture deck.
+> Regenerate with `make_ui_section_gifs.py` /
+> `make_ui_call_to_worship_demo_gif.py` / `make_ui_hymn_demo_gif.py` /
 > `make_ui_scripture_demo_gif.py`.
 
 ### Step 1 · Call to Worship (宣召經文)
 
-![Call to Worship UI demo](user_guide_assets/section_psalm.gif)
+![Call to Worship UI demo](user_guide_assets/section_call_to_worship.gif)
 
 - **書卷 (Book):** picking a book fills the FHL book code into **出處
   (Reference)**; you can also type the reference directly, e.g. `詩篇 34:1-3`

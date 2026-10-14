@@ -30,7 +30,7 @@ import model  # noqa: E402
 
 # (section key accepted by build_section_pptx_bytes, 標題, output filename)
 SECTIONS = [
-    ("psalm", "宣召經文", "section_psalm.gif"),
+    ("psalm", "宣召經文", "section_call_to_worship.gif"),
     ("hymns", "詩歌敬拜", "section_hymns.gif"),
     ("scripture", "讀經", "section_scripture.gif"),
     ("sermon", "講道", "section_sermon.gif"),

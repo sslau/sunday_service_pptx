@@ -24,8 +24,10 @@ import os
 from PIL import Image
 
 # (wizard step button label, section key -> section_<key>.gif, 標題)
+# 宣召經文 (step 1) is not captured here: its demo GIF is produced by
+# make_ui_call_to_worship_demo_gif.py, which drives the 書卷 search + 出處 +
+# fhl.net fetch interaction instead of just scrolling the panel.
 SECTIONS = [
-    ("1 宣召經文", "psalm"),
     ("2 詩歌", "hymns"),
     ("4 讀經", "scripture"),
     ("5 講道", "sermon"),
