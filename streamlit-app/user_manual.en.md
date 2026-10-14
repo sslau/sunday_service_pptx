@@ -96,7 +96,7 @@ to all slide text.
 - **書卷 (Book):** picking a book fills the FHL book code into **出處
   (Reference)**; you can also type the reference directly, e.g. `詩篇 34:1-3`
   (Psalm 34:1-3).
-- **譯本版本 (Translation):** 和合本 / 和合本2010（和修版）/ 新譯本. Selecting a
+- **譯本版本 (Translation):** 和合本 / 和修版 / 新譯本. Selecting a
   version appends `（版本）` to the reference and re-fetches. You can also write
   a version note directly (several translations are supported).
 - **從 fhl.net 聖經網輸入 (Load from Bible site):** fetches the passage from

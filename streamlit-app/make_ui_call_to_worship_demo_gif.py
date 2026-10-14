@@ -50,16 +50,6 @@ def _mark(loc):
         _PENDING["xy"] = (bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
 
 
-def click(page, text, nth=0):
-    loc = page.locator('button:has-text("%s")' % text).nth(nth)
-    if loc.count():
-        loc.scroll_into_view_if_needed()
-        _mark(loc)
-        loc.click()
-        return True
-    return False
-
-
 def grab(page, shots, tag):
     page.wait_for_timeout(600)
     img = Image.open(BytesIO(page.screenshot())).convert("RGB")
@@ -74,52 +64,75 @@ def capture(page, args):
     shots = []
     # make sure we are on step 1 · 宣召經文 (clicking it when already there is a
     # no-op, so this is safe either way)
-    click(page, args.step_label)
+    page.evaluate("window.scrollTo(0, 0)")
+    step = page.locator('button:has-text("%s")' % args.step_label).first
+    if step.count():
+        _mark(step)
+        step.click()
     page.wait_for_timeout(args.settle)
     page.evaluate("window.scrollTo(0, 0)")
+    if step.count():
+        _mark(step)                        # re-mark at the top, after settling
     grab(page, shots, "step-open")
 
-    # 1) 書卷 dropdown — type to filter the virtual list, then pick the book
+    # 1) 書卷 dropdown — type to filter the virtual list
     sb = page.get_by_label(args.book_label).first
     sb.scroll_into_view_if_needed()
-    _mark(sb)
     sb.click()
     if args.book_filter:
         sb.fill(args.book_filter)
         page.wait_for_timeout(1300)
+    _mark(sb)
     grab(page, shots, "book-search")
 
+    # pick 詩篇 — flag the option while the list is still open, then click it
     opt = page.locator('[role="option"]:has-text("%s")' % args.book).first
     if opt.count():
         _mark(opt)
+        grab(page, shots, "book-pick")
         opt.click()
         page.wait_for_timeout(2000)
     picked = page.get_by_label(args.ref_label).first
     print("出處 after book pick: %r"
           % (picked.input_value() if picked.count() else ""))
+    if picked.count():
+        picked.scroll_into_view_if_needed()
+        _mark(picked)                      # hand on 出處, now showing the code
     grab(page, shots, "book-picked")
 
     # 2) the pick filled 出處 with the book code ("詩"); complete it to 詩 100:1-5
     ref = page.get_by_label(args.ref_label).first
     ref.scroll_into_view_if_needed()
-    _mark(ref)
     ref.click()
     ref.fill(args.ref)
     ref.press("Enter")
     page.wait_for_timeout(1500)
     print("出處 typed          : %r" % ref.input_value())
+    ref.scroll_into_view_if_needed()
+    _mark(ref)
     grab(page, shots, "ref-typed")
 
     # 3) load the verses from fhl.net into 內容
-    if click(page, args.load_label):
+    btn = page.locator('button:has-text("%s")' % args.load_label).first
+    if btn.count():
+        btn.scroll_into_view_if_needed()
+        _mark(btn)
+        btn.click()
         page.wait_for_timeout(6000)
     ta = page.locator("textarea").first
     chars = ta.input_value() if ta.count() else ""
     print("verses chars: %d" % len(chars))
     if ta.count():
         ta.scroll_into_view_if_needed()
-        ta.evaluate("(e) => e.scrollIntoView({block: 'center'})")
         page.wait_for_timeout(400)
+    if btn.count():
+        bb = btn.bounding_box()
+        # the page scrolled to the verses, so re-aim the hand at the button's
+        # *new* position; only draw it if the button is still on screen.
+        if bb and -20 <= bb["y"] <= args.view_height - 20:
+            _mark(btn)
+        print("fetch button y after load: %s"
+              % ("%.0f" % bb["y"] if bb else "n/a"))
     grab(page, shots, "loaded")
     return shots
 

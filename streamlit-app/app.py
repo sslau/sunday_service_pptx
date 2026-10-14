@@ -1659,9 +1659,9 @@ def _pick_book(select_key, ref_key):
     st.session_state[select_key] = None
 
 
-VERSION_OPTIONS = ["和合本", "和合本2010（和修版）", "新譯本"]
+VERSION_OPTIONS = ["和合本", "和修版", "新譯本"]
 VERSION_NOTE = {"和合本": "和合本",
-                "和合本2010（和修版）": "和合本2010", "新譯本": "新譯本"}
+                "和修版": "和合本2010", "新譯本": "新譯本"}
 
 # 經文 size floors shared by the widgets and the stored-week clamp.
 REF_SIZE_MIN, REF_SIZE_MAX = 20, 90
