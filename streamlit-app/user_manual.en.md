@@ -164,7 +164,11 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - **歌詞字級 (pt) (Lyric font size):** fixed size (**default 52pt**, 48–52pt
   selectable; it does not shrink to fit; long lines wrap).
 - **歌詞文字加上陰影 (Text shadow):** keeps lyrics readable over background
-  images and is written into the deck.
+  images and is written into the deck (the shadow is now a bit thicker).
+- **歌詞文字顏色 (Text colour):** choose **white text + black shadow (for dark
+  backgrounds)** or **black text + white shadow (for light backgrounds)**; the
+  shadow automatically pairs with the opposite colour. This also applies to the
+  Response Hymn (both sections share the font size and text colour).
 - **▶ 預覽這首詩歌的 slides (Preview):** "🎬 產生這首詩歌的 slide" renders an
   inline preview of each page (text and sizes, title card included) and offers
   that hymn's own `.pptx` for download.

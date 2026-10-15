@@ -800,6 +800,7 @@ def _seed_values(week, date):
         "hymn_font_min": week.get("hymn_font_min", 48),
         "hymn_margin_in": week.get("hymn_margin_in", 0.83),
         "hymn_text_shadow": bool(week.get("hymn_text_shadow", True)),
+        "hymn_text_color": (week.get("hymn_text_color") or "white"),
         "call_font": week.get("call_font", "DFKai-SB") or "DFKai-SB",
         "hymns_finalized": bool(week.get("hymns_finalized", False)),
         "scripture_ref": scripture.get("ref", ""),
@@ -1088,6 +1089,7 @@ def assemble_week(date):
         "hymn_font_min": int(gv("hymn_font_min", 48)),
         "hymn_margin_in": float(gv("hymn_margin_in", 0.83)),
         "hymn_text_shadow": bool(gv("hymn_text_shadow", True)),
+        "hymn_text_color": str(gv("hymn_text_color", "white") or "white"),
         "call_font": str(gv("call_font", "DFKai-SB") or "DFKai-SB"),
         "hymns_finalized": bool(gv("hymns_finalized", False)),
         "hymns": [assemble_hymn(date, h) for h in ui_hymns],
@@ -1782,6 +1784,25 @@ def _song_font_selector(label, hint=None):
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
+
+
+def _song_color_selector():
+    """歌詞文字顏色：白字＋黑陰影（適合深色背景）或黑字＋白陰影（適合淺色背景）。
+    排版與字級選擇器一致；舊週次若無此設定則預設白字。"""
+    opts = ["white", "black"]
+    cur = str(sv("hymn_text_color", "white") or "white")
+    if cur not in opts:
+        cur = "white"
+    c1, c2, _ = st.columns([1.3, 1.7, 4.0], vertical_alignment="center")
+    c1.markdown("**歌詞文字顏色**")
+    c2.selectbox(
+        "歌詞文字顏色",
+        options=opts,
+        index=opts.index(cur),
+        format_func=lambda v: ("白字＋黑陰影（適合深色背景）" if v == "white"
+                               else "黑字＋白陰影（適合淺色背景）"),
+        key=K("hymn_text_color"),
+        label_visibility="collapsed")
 
 
 def _strip_ref_note(ref):
@@ -2889,6 +2910,7 @@ with tab_edit:
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
+            _song_color_selector()
             _song_font_selector(
                 "歌詞字級（pt）",
                 hint="固定字級（預設 52pt、可選 48–52pt），不隨行長縮小；"

@@ -134,6 +134,9 @@ def normalize_week(w):
     w["hymn_font_min"] = _num(w.get("hymn_font_min"), 48)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
     w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))
+    w["hymn_text_color"] = ("black" if str(w.get("hymn_text_color")
+                                          or "white").lower() == "black"
+                            else "white")
     w["call_font"] = str(w.get("call_font") or "DFKai-SB")
     w["hymns_finalized"] = bool(w.get("hymns_finalized", False))
 

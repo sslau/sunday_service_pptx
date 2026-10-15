@@ -988,7 +988,7 @@ def _blank_layout(pres):
 
 def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
                    lines, size, typeface, algn, shadow=False, bold=False,
-                   underline=False):
+                   underline=False, color="FFFFFF", shadow_color="000000"):
     """Add a brand-new textbox from scratch (no template inheritance)."""
     tb = slide.shapes.add_textbox(int(left_in * 914400),
                                   int(top_in * 914400),
@@ -1002,20 +1002,21 @@ def _fresh_textbox(slide, left_in, top_in, width_in, height_in,
         r = p.add_run()
         r.text = line
         r.font.size = Pt(size)
-        r.font.color.rgb = RGBColor.from_string("FFFFFF")
+        r.font.color.rgb = RGBColor.from_string(color)
         if bold:
             r.font.bold = True
         if underline:
             r.font.underline = True
         if shadow:
-            _run_shadow(r)
+            _run_shadow(r, color=shadow_color)
     _set_font(tb, typeface)
     return tb
 
 
-def _add_slide_page(slide, page, total, typeface):
-    """Bottom-right 頁碼 `N/M` for a songs slide (white, subtle shadow so it
-    stays readable over any 背景圖)."""
+def _add_slide_page(slide, page, total, typeface,
+                    color="FFFFFF", shadow_color="000000"):
+    """Bottom-right 頁碼 `N/M` for a songs slide (matches the lyric text colour,
+    with a shadow so it stays readable over any 背景圖)."""
     try:
         w = slide.slide_width / 914400
     except Exception:
@@ -1030,12 +1031,12 @@ def _add_slide_page(slide, page, total, typeface):
     r = p.add_run()
     r.text = f"{page}/{total}"
     r.font.size = Pt(16)
-    r.font.color.rgb = RGBColor.from_string("FFFFFF")
-    _run_shadow(r)
+    r.font.color.rgb = RGBColor.from_string(color)
+    _run_shadow(r, color=shadow_color)
     _set_font(tb, typeface)
 
 
-def _run_shadow(run, color="000000", alpha_pct=90, blur_in=0.80, dist_in=0.50):
+def _run_shadow(run, color="000000", alpha_pct=96, blur_in=1.20, dist_in=0.70):
     """Text shadow on a run — the same <a:effectLst><a:outerShdw> XML that
     PowerPoint itself writes for text shadows, so Microsoft PowerPoint,
     ONLYOFFICE and LibreOffice render it identically."""
@@ -1215,11 +1216,18 @@ def build_hymns_section(pres, cfg, hymns):
         title = hymn["title"]
         tsize = 70
         shadow = cfg.get("hymn_text_shadow", True)
+        # 文字顏色／陰影配對：白字＋黑陰影（深色背景）或 黑字＋白陰影（淺色背景）。
+        white_text = str(cfg.get("hymn_text_color", "white")
+                         or "white").lower() != "black"
+        text_color = "FFFFFF" if white_text else "000000"
+        shadow_color = "000000" if white_text else "FFFFFF"
         _fresh_textbox(slide, margin, 2.0, box_w, 1.4, [title],
-                       tsize, typeface, PP_ALIGN.CENTER, shadow=shadow)
+                       tsize, typeface, PP_ALIGN.CENTER, shadow=shadow,
+                       color=text_color, shadow_color=shadow_color)
         if hymn.get("subtitle"):
             _fresh_textbox(slide, margin, 3.4, box_w, 0.9, [hymn["subtitle"]],
-                           30, typeface, PP_ALIGN.CENTER, shadow=shadow)
+                           30, typeface, PP_ALIGN.CENTER, shadow=shadow,
+                           color=text_color, shadow_color=shadow_color)
         attrs = []
         if hymn.get("source"):
             attrs.append("詩集: " + hymn["source"])
@@ -1229,7 +1237,8 @@ def build_hymns_section(pres, cfg, hymns):
             attrs.append("詞: " + hymn["lyricist"])
         if attrs:
             _fresh_textbox(slide, margin + 0.4, 4.3, box_w - 0.4, 1.6, attrs,
-                           40, typeface, PP_ALIGN.LEFT, shadow=shadow)
+                           40, typeface, PP_ALIGN.LEFT, shadow=shadow,
+                           color=text_color, shadow_color=shadow_color)
 
         # 每首詩歌的總頁數：各段（＋副歌）— 標題卡不計。
         verses = [[_hymn_clean_line(ln) for ln in vs]
@@ -1256,8 +1265,10 @@ def build_hymns_section(pres, cfg, hymns):
             slide = _new_slide(pres, bg=bg)
             _fresh_textbox(slide, margin, 1.2, box_w, 5.5, lines,
                            song_size, typeface, PP_ALIGN.CENTER,
-                           shadow=cfg.get("hymn_text_shadow", True))
-            _add_slide_page(slide, page, total, typeface)
+                           shadow=shadow, color=text_color,
+                           shadow_color=shadow_color)
+            _add_slide_page(slide, page, total, typeface,
+                            color=text_color, shadow_color=shadow_color)
 
         for verse_lines in verses:
             add_verse(verse_lines)
