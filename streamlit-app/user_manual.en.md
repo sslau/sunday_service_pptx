@@ -63,7 +63,7 @@ From top to bottom:
 2. On the "✏️ 編輯內容" tab, fill the sections using the **nine step buttons**
    at the top (any order works).
 3. Where a section needs a ready-made sermon/announcements file, **upload the
-   `.pptx`** in that step (or fetch it from OneDrive).
+   `.pptx`** in that step (or fetch it from SharePoint).
 4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status).
 5. In the sidebar click "💾 儲存目前內容", then "📽 製成整場投影片".
 6. Click "⬇️ 下載 PPTX" to get `Sunday_Service_<date>.pptx`.
@@ -89,7 +89,7 @@ to all slide text.
 > Worship — search the 書卷 list → 出處 詩 100:1-5 → load from fhl.net; Hymns —
 > lyric search → import → background → generate & download the deck; Scripture —
 > enter a book/verse → load from fhl.net → generate and download the scripture
-> deck; Sermon — open the 從 OneDrive panel → pick the week's deck.
+> deck; Sermon — open the 從 SharePoint panel → pick the week's deck.
 > Regenerate with `make_ui_section_gifs.py` /
 > `make_ui_call_to_worship_demo_gif.py` / `make_ui_hymn_demo_gif.py` /
 > `make_ui_scripture_demo_gif.py` / `make_ui_sermon_demo_gif.py`.
@@ -125,7 +125,7 @@ to all slide text.
     (good for a longer reading).
 - **內容 (Content):** paste the whole passage in one box; the app **splits it
   across slides automatically** (section 7).
-- Top-right "🌐 從 OneDrive 讀取宣召經文投影片": with OneDrive configured, fetch
+- Top-right "🌐 從 SharePoint 讀取宣召經文投影片": with SharePoint configured, fetch
   `psalm_<date>.pptx` to replace the compiled output.
 
 ### Step 2 · Hymns (詩歌敬拜)
@@ -170,9 +170,9 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   that hymn's own `.pptx` for download.
 - **Upload a hymns `.pptx`:** an uploaded file wins for the whole section (its
   fonts/bullets are preserved); leave it empty to compile live from the page.
-  "🎵 產生詩歌投影片" compiles a standalone file from the page.
+  Use the "🎬 產生全部詩歌的投影片（合併成一份）" button at the **bottom** of
+  this section to compile every hymn into one `.pptx` for download (read-only).
 - "＋ 新增詩歌" adds a hymn; "🗑 移除這首詩歌" asks for confirmation first.
-- "✔️ 標記『詩歌敬拜』此節為定稿 (Mark finalized)": a marker only.
 
 > The "本週詩歌一覽" strip shows each hymn's status (e.g. "⚠ 未填曲名" no title,
 > "⚠ 沒有歌詞" no lyrics, or "N 段") with a "前往編輯" (Go to edit) button.
@@ -180,7 +180,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 ### Step 3 · Offering (獻詩)
 
 - This section accepts a ready-made **`.pptx` only**: upload or fetch from
-  OneDrive; the file wins when building. Left empty, the section is skipped.
+  SharePoint; the file wins when building. Left empty, the section is skipped.
   Uploaded files may be lost when the server restarts, so finish the full build
   the same day.
 - In the full deck, Offering comes **right after the prayer / Lord's Prayer**.
@@ -200,11 +200,11 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 
 ![Sermon UI demo](user_guide_assets/section_sermon.gif)
 
-- The GIF shows picking the sermon deck from OneDrive: open 從 OneDrive 讀取講道投影片
+- The GIF shows picking the sermon deck from SharePoint: open 從 SharePoint 讀取講道投影片
   → choose the week's file in the list (e.g. `sermons_20260920.pptx`) → then press
-  ⚡ 從 OneDrive 讀取並儲存.
+  ⚡ 從 SharePoint 讀取並儲存.
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `sermon_<date>.pptx` from OneDrive.
+  `sermon_<date>.pptx` from SharePoint.
 - "🗣 產生講道投影片" compiles a standalone file from the page's sermon content
   (when the week already has any).
 
@@ -219,7 +219,8 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   **The lyric font size is shared with Hymns.**
 - You can also **upload a ready-made `.pptx`** (the file wins); otherwise the
   page content is compiled live.
-- "✔️ 標記『詩歌回應』此節為定稿" as above.
+- The "🎶 產生詩歌回應的投影片" button at the **bottom** of this section
+  compiles the response hymn into one downloadable `.pptx` (read-only).
 - In the full deck the response hymn sits **after the sermon and before
   communion** (its header image is fixed to `media/response_hymn.jpg`).
 
@@ -228,7 +229,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Ticking "聖餐" adds a **Communion + Apostles' Creed** pair after the sermon /
   response.
 - It is **pre-ticked on the month's first Sunday**.
-- If you fetch `communion_<date>.pptx` from OneDrive, it **replaces** the built-in
+- If you fetch `communion_<date>.pptx` from SharePoint, it **replaces** the built-in
   Communion + Creed pair (and is used even when the checkbox is off).
 
 ### Step 8 · Announcements (家事分享)
@@ -236,7 +237,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 ![Announcements UI demo](user_guide_assets/section_announcements.gif)
 
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `announcements_<date>.pptx` from OneDrive; "📋 產生家事分享投影片" compiles it
+  `announcements_<date>.pptx` from SharePoint; "📋 產生家事分享投影片" compiles it
   from the page.
 - In the full deck, announcements sit after the doxology and benediction, second
   to last (the "closing" slide is last).
@@ -387,12 +388,12 @@ passage, then "📜 製成經文投影片 pptx" to download `scripture_<date>.pp
 
 ---
 
-## 8. Fetching from OneDrive (optional)
+## 8. Fetching from SharePoint (optional)
 
 If an admin has set `[onedrive]` in Secrets (tenant_id / client_id /
 client_secret / site_host / site_path / folder_path), each section's
-"🌐 從 OneDrive 讀取…投影片" panel lists that date's folder and downloads after
-you click "⚡ 從 OneDrive 讀取並儲存".
+"🌐 從 SharePoint 讀取…投影片" panel lists that date's folder and downloads after
+you click "⚡ 從 SharePoint 讀取並儲存".
 
 - Expected names are the section's canonical filenames (e.g.
   `psalm_<date>.pptx`, `sermon_<date>.pptx`, `announcements_<date>.mp4`); folder

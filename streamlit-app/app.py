@@ -471,10 +471,10 @@ def _odrive_panel(section, label, is_video=False):
     """Expander that lists the section decks (or the 家事MP4 when is_video) in
     the configured OneDrive/SharePoint folder and lets the user pick which file
     to download.  Reusable across wizard steps."""
-    with st.expander("🌐 從 OneDrive 讀取%s投影片" % label):
+    with st.expander("🌐 從 SharePoint 讀取%s投影片" % label):
         cfg = _od_config()
         if not cfg:
-            st.info("未設定 OneDrive（secrets.toml 的 [onedrive] 區塊："
+            st.info("未設定 SharePoint（secrets.toml 的 [onedrive] 區塊："
                     "tenant_id / client_id / client_secret / site_host / "
                     "site_path / folder_path）。設定後即可從雲端讀取。")
             return
@@ -485,12 +485,12 @@ def _odrive_panel(section, label, is_video=False):
                 else os.path.basename(section_path(section, DATE) or ""))
         ext = ".mp4" if is_video else ".pptx"
         if is_video:
-            st.caption("📽 家事MP4 會從 OneDrive **`%s`** 資料夾（含所有子資料夾）"
+            st.caption("📽 家事MP4 會從 SharePoint **`%s`** 資料夾（含所有子資料夾）"
                        "搜尋 **.mp4**；請從下方清單選擇檔案後按「讀取並儲存」。"
                        "預期名稱：**`%s`**。"
                        % (cfg.get("folder_path", ""), want))
         else:
-            st.caption("📽 %s投影片會直接從 OneDrive **`%s`** 資料夾"
+            st.caption("📽 %s投影片會直接從 SharePoint **`%s`** 資料夾"
                        "（依日期子資料夾，如 `%s`）讀取；請從下方清單選擇檔案後"
                        "按「讀取並儲存」。預期名稱：**`%s`**。"
                        % (label, cfg.get("folder_path", ""), _mmdd, want))
@@ -509,7 +509,7 @@ def _odrive_panel(section, label, is_video=False):
                 cand = onedrive.files_in_date_folder(
                     cfg, cfg.get("folder_path", ""), DATE)
         except Exception as exc:
-            st.error(f"OneDrive 讀取失敗：{exc}")
+            st.error(f"SharePoint 讀取失敗：{exc}")
             return
         # Display label: 名稱；影片在日期夾外時附上位置。
         labels = []
@@ -555,12 +555,12 @@ def _odrive_panel(section, label, is_video=False):
         else:
             picked = None
             if is_video:
-                st.info("OneDrive **`%s`** 資料夾中目前找不到任何 "
+                st.info("SharePoint **`%s`** 資料夾中目前找不到任何 "
                         "**MP4** 檔（含子資料夾）。上載家事影片後即可在此選擇。"
                         % cfg.get("folder_path", ""))
             else:
                 st.info("該日期資料夾中沒有可下載的簡報檔。")
-        if st.button("⚡ 從 OneDrive 讀取並儲存", type="primary",
+        if st.button("⚡ 從 SharePoint 讀取並儲存", type="primary",
                      key=K(f"odrive_fetch_{section}")):
             if not picked:
                 st.warning("沒有可下載的檔案。")
@@ -571,11 +571,11 @@ def _odrive_panel(section, label, is_video=False):
                 else:
                     name = _od_fetch_section(section, DATE, cfg, picked)
             except Exception as exc:
-                st.error(f"OneDrive 讀取失敗：{exc}")
+                st.error(f"SharePoint 讀取失敗：{exc}")
             else:
                 if name:
-                    st.success(f"已從 OneDrive 讀取：{name}")
-                    _log_action("OneDrive 讀取 " + label, name)
+                    st.success(f"已從 SharePoint 讀取：{name}")
+                    _log_action("SharePoint 讀取 " + label, name)
                 else:
                     st.warning("下載未完成，請再試一次。")
 
@@ -2898,8 +2898,7 @@ with tab_edit:
             section_header("2", "詩歌敬拜（Hymns）", demo="hymns")
             _odrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
-                               f"songs_slides_{DATE}.pptx",
-                               btn="🎵 產生詩歌投影片")
+                               f"songs_slides_{DATE}.pptx")
             if not _cloud_deck_status("songs", "詩歌", "build_songs"):
                 st.caption("以下內容以網頁內容現場編譯；上載 .pptx 時"
                            "以檔案為準，字型／項目符號沿用來源檔。")
@@ -2915,6 +2914,7 @@ with tab_edit:
 
             hymns_ui = _get_ui("hymns")
             hymn_uids = [h["_id"] for h in hymns_ui]
+
             # Seed each song expander's open/closed state once, so the summary
             # strip's 前往編輯 can drive it; the first song starts open.
             for i, h in enumerate(hymns_ui):
@@ -3023,7 +3023,36 @@ with tab_edit:
                                     "refrain": "", "repeat": True,
                                     "stanzas": [""]})
                 st.rerun()
-            _finalize_stamp("hymns_finalized", "詩歌敬拜")
+
+            # 一次將 詩歌敬拜 內全部詩歌編譯成「一份」.pptx 供下載（唯讀，
+            # 不寫入 Google Sheet）。
+            if st.button("🎬 產生全部詩歌的投影片（合併成一份）",
+                         key=K("gen_all_songs_pptx"),
+                         type="primary",
+                         use_container_width=True,
+                         help="把 詩歌敬拜 內全部詩歌編譯成一份 .pptx，按一下"
+                              "即可下載。"):
+                try:
+                    _adata, _acnt = build_section_pptx_bytes(
+                        "hymns", assemble_week(DATE))
+                    st.session_state[K("songs_all_pptx")] = _adata
+                    st.session_state[K("songs_all_pptx_date")] = DATE
+                    st.session_state[K("songs_all_pptx_count")] = _acnt
+                    st.toast(f"已產生全部詩歌：{_acnt} 頁")
+                except Exception as exc:
+                    st.error(f"產生失敗：{exc}")
+            _all_bytes = st.session_state.get(K("songs_all_pptx"))
+            if _all_bytes and \
+                    st.session_state.get(K("songs_all_pptx_date")) == DATE:
+                _an = st.session_state.get(K("songs_all_pptx_count"), "?")
+                st.download_button(
+                    f"⬇️ 下載全部詩歌 .pptx（共 {_an} 頁）",
+                    data=_all_bytes,
+                    file_name=f"songs_slides_{DATE}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument"
+                         ".presentationml.presentation",
+                    key=K("dl_all_songs_pptx"),
+                    use_container_width=True)
 
     elif step == 3:
         with st.container(border=True):
@@ -3062,8 +3091,7 @@ with tab_edit:
                            "單首回應詩歌，緊接信息之後（可選）", demo="response")
             _odrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
-                               f"response_{DATE}.pptx",
-                               btn="🎶 產生詩歌回應投影片")
+                               f"response_{DATE}.pptx")
             if not _cloud_deck_status("response", "詩歌回應", "build_response"):
                 st.caption("此節**可選**：不需要可直接按「下一步」略過。"
                            "要加入時，可填寫以下內容現場編譯；"
@@ -3087,7 +3115,35 @@ with tab_edit:
                           key=K("resp_lyricist"))
             with st.expander("🎨 背景圖"):
                 _bg_picker("resp_bg", "")
-            _finalize_stamp("resp_finalized", "詩歌回應")
+
+            # 一次將 詩歌回應 編譯成「一份」.pptx 供下載（唯讀，不寫入
+            # Google Sheet）。
+            if st.button("🎶 產生詩歌回應的投影片",
+                         key=K("gen_response_pptx"),
+                         type="primary",
+                         use_container_width=True,
+                         help="把 詩歌回應 編譯成一份 .pptx，按一下即可下載。"):
+                try:
+                    _rdata, _rcnt = build_section_pptx_bytes(
+                        "response", assemble_week(DATE))
+                    st.session_state[K("resp_all_pptx")] = _rdata
+                    st.session_state[K("resp_all_pptx_date")] = DATE
+                    st.session_state[K("resp_all_pptx_count")] = _rcnt
+                    st.toast(f"已產生詩歌回應：{_rcnt} 頁")
+                except Exception as exc:
+                    st.error(f"產生失敗：{exc}")
+            _rbytes = st.session_state.get(K("resp_all_pptx"))
+            if _rbytes and \
+                    st.session_state.get(K("resp_all_pptx_date")) == DATE:
+                _rn = st.session_state.get(K("resp_all_pptx_count"), "?")
+                st.download_button(
+                    f"⬇️ 下載詩歌回應 .pptx（共 {_rn} 頁）",
+                    data=_rbytes,
+                    file_name=f"response_{DATE}.pptx",
+                    mime="application/vnd.openxmlformats-officedocument"
+                         ".presentationml.presentation",
+                    key=K("dl_response_pptx"),
+                    use_container_width=True)
 
     elif step == 7:
         with st.container(border=True):
