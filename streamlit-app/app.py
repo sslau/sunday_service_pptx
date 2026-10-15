@@ -278,15 +278,25 @@ def _bg_picker(wkey, default):
                           "可供所有詩歌選擇）",
                           type=["jpg", "jpeg", "png"],
                           key=K(wkey + "_bgupload"))
-    if up is not None:
-        ext = ".png" if (up.name or "").lower().endswith(".png") else ".jpg"
-        path = os.path.join(os.getcwd(), "media",
-                            "song_bg_%s%s" % (uuid.uuid4().hex[:8], ext))
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as fh:
-            fh.write(up.getbuffer())
-        st.session_state[K(wkey)] = os.path.relpath(path, os.getcwd())
-        st.rerun()
+    # 每次「新」上傳只存檔一次。file_uploader 在 rerun 後仍會回傳同一個檔案，
+    # 若每個 rerun 都寫檔＋st.rerun()，就會變成無限迴圈（每圈多存一張、多一張縮圖）。
+    done_key = K(wkey + "_bgupload_done")
+    if up is None:
+        # 使用者清除了上傳 → 允許之後再上傳同一個檔案。
+        st.session_state.pop(done_key, None)
+    else:
+        sig = getattr(up, "file_id", "") or f"{up.name}:{getattr(up, 'size', '')}"
+        if st.session_state.get(done_key) != sig:
+            st.session_state[done_key] = sig
+            ext = (".png" if (up.name or "").lower().endswith(".png")
+                   else ".jpg")
+            path = os.path.join(os.getcwd(), "media",
+                                "song_bg_%s%s" % (uuid.uuid4().hex[:8], ext))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(up.getbuffer())
+            st.session_state[K(wkey)] = os.path.relpath(path, os.getcwd())
+            st.rerun()
     st.caption("亦可直接放圖片進 media/（檔名 song_bg*.jpg 就會出現在縮圖列）；"
                "上傳的圖片只存本機，要放上 Cloud 請把 media/ 一起提交到 Git。")
     if current:
