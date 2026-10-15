@@ -580,22 +580,6 @@ def _odrive_panel(section, label, is_video=False):
                     st.warning("下載未完成，請再試一次。")
 
 
-def _finalize_stamp(key, label):
-    """Checkbox that 'stamps' a section as finalized (persists with the week)."""
-    st.markdown(
-        "<style>"
-        '[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] p,'
-        '[data-testid="stAlert"] p {'
-        "font-size:1.25rem;"
-        "}</style>",
-        unsafe_allow_html=True)
-    st.write("")
-    marked = st.checkbox(f"✔️ 標記「{label}」此節為定稿（蓋章）",
-                         value=sv(key, False), key=K(key))
-    if marked:
-        st.success(f"📌「{label}」已標記為定稿 —— 內容以目前編輯為準。")
-
-
 def parse_slide_numbers(text):
     """Parse comma-separated (and/or dash-ranged) 1-based slide numbers into
     a list, preserving input order and dropping duplicates/invalid parts."""
