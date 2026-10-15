@@ -6,7 +6,8 @@
 import json
 import os
 import threading
-import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 SHEET_TAB = "logs"
 SESSIONS_TAB = "sessions"
@@ -21,6 +22,11 @@ LOCAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "data", "login_log.json")
 LOCAL_SESSIONS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                    "data", "sessions.json")
+PACIFIC_TIME = ZoneInfo("America/Los_Angeles")
+
+
+def _timestamp():
+    return datetime.now(PACIFIC_TIME).strftime("%Y-%m-%d %H:%M:%S")
 
 
 # ---- spreadsheet plumbing ---------------------------------------------------
@@ -71,7 +77,7 @@ def append_login(result, ip="", ua="", secrets=None):
     """Record one login attempt (`result`: 'success' | 'failed') in the
     "logs" worksheet (local JSON fallback when Sheets unavailable)."""
     rec = {
-        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "ts": _timestamp(),
         "ip": (ip or "").split(",")[0].strip(),
         "ua": (ua or "")[:200],
         "result": result,
@@ -142,7 +148,7 @@ def _save_local_sessions(data):
 def new_session(session_id, ip="", ua="", secrets=None):
     """Record the start of a login session: one row in the "sessions"
     worksheet (or the local sessions.json fallback)."""
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    ts = _timestamp()
     rec = {
         "session_id": session_id, "login_ts": ts, "updated_at": ts,
         "ip": (ip or "").split(",")[0].strip(), "ua": (ua or "")[:200],
@@ -168,7 +174,7 @@ def new_session(session_id, ip="", ua="", secrets=None):
 def log_action(session_id, label, detail="", secrets=None, ip="", ua=""):
     """Append one important action and refresh that session's summary row
     (n_actions counter + running summary)."""
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    now = _timestamp()
     with _lock:
         try:
             sheet = _sheet(secrets)
@@ -180,7 +186,7 @@ def log_action(session_id, label, detail="", secrets=None, ip="", ua=""):
             data = _local_sessions()
             rec = data.get(session_id)
             if rec is None:
-                ts = time.strftime("%Y-%m-%d %H:%M:%S")
+                ts = _timestamp()
                 rec = {
                     "session_id": session_id, "login_ts": ts,
                     "updated_at": ts,
