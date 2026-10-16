@@ -416,7 +416,8 @@ def _od_fetch_section(section, date, cfg, picked_file=None):
         picked_file and picked_file.get("id") and picked_file.get("name")) else None
     if picked is None:
         files = onedrive.files_in_date_folder(
-            cfg, cfg.get("folder_path", ""), date)
+            cfg, cfg.get("folder_path", ""), date,
+            archive=onedrive.is_past(date))
         picked = next((f for f in files if (f.get("name") or "") == want), None)
         if picked is None:
             variants = onedrive._date_variants(date)
@@ -448,7 +449,8 @@ def _od_fetch_video(cfg, picked_file=None):
     if picked is None:
         want = f"announcements_{DATE}.mp4"
         files = onedrive.files_in_date_folder(
-            cfg, cfg.get("folder_path", ""), DATE)
+            cfg, cfg.get("folder_path", ""), DATE,
+            archive=onedrive.is_past(DATE))
         picked = next((f for f in files if (f.get("name") or "") == want), None)
         if picked is None:
             variants = onedrive._date_variants(DATE)
@@ -494,30 +496,40 @@ def _odrive_panel(section, label, is_video=False):
         want = (f"announcements_{DATE}.mp4" if is_video
                 else os.path.basename(section_path(section, DATE) or ""))
         ext = ".mp4" if is_video else ".pptx"
+        # Past Sundays are moved into the `_Archive` subfolder: search there too.
+        archive = onedrive.is_past(DATE)
+        roots = onedrive.search_folders(cfg.get("folder_path", ""),
+                                        archive=archive)
+        where = "、".join("`%s`" % r for r in roots)
         if is_video:
-            st.caption("📽 家事MP4 會從 SharePoint **`%s`** 資料夾（含所有子資料夾）"
+            st.caption("📽 家事MP4 會從 SharePoint %s 資料夾（含所有子資料夾）"
                        "搜尋 **.mp4**；請從下方清單選擇檔案後按「讀取並儲存」。"
                        "預期名稱：**`%s`**。"
-                       % (cfg.get("folder_path", ""), want))
+                       % (where, want))
         else:
-            st.caption("📽 %s投影片會直接從 SharePoint **`%s`** 資料夾"
+            st.caption("📽 %s投影片會直接從 SharePoint %s 資料夾"
                        "（依日期子資料夾，如 `%s`）讀取；請從下方清單選擇檔案後"
                        "按「讀取並儲存」。預期名稱：**`%s`**。"
-                       % (label, cfg.get("folder_path", ""), _mmdd, want))
+                       % (label, where, _mmdd, want))
+        _date_names = set()
         try:
             if is_video:
-                # 家事MP4 可能放在任何子資料夾：搜尋整個 tree，日期夾優先。
-                cand = onedrive.find_mp4s(cfg, cfg.get("folder_path", ""))
-                _sub = onedrive._date_subfolder(
-                    cfg, cfg.get("folder_path", ""), DATE)
-                if _sub:
-                    _datep = ((cfg.get("folder_path", "") or "").rstrip("/")
-                              + "/" + _sub["name"]).strip("/")
-                    cand.sort(key=lambda f: 0 if (f.get("path") or "").strip("/")
-                              .startswith(_datep + "/") else 1)
+                # 家事MP4 可能放在任何子資料夾（含 _Archive）：搜尋整個 tree，
+                # 日期夾優先。find_mp4s 由 folder_path 遞歸，已涵蓋 _Archive。
+                cand = onedrive.find_mp4s(cfg, roots[0])
+                _date_names = {
+                    s["name"]
+                    for s in (onedrive._date_subfolder(cfg, _root, DATE,
+                                                       missing_ok=True)
+                              for _root in roots) if s}
+                if _date_names:
+                    cand.sort(key=lambda f: 0 if any(
+                        s in _date_names
+                        for s in (f.get("path") or "").strip("/").split("/"))
+                        else 1)
             else:
                 cand = onedrive.files_in_date_folder(
-                    cfg, cfg.get("folder_path", ""), DATE)
+                    cfg, cfg.get("folder_path", ""), DATE, archive=archive)
         except Exception as exc:
             st.error(f"SharePoint 讀取失敗：{exc}")
             return
@@ -526,13 +538,9 @@ def _odrive_panel(section, label, is_video=False):
         for f in cand:
             n = f.get("name", "")
             p = (f.get("path") or "").strip("/")
-            if is_video and _sub:
-                _datep = ((cfg.get("folder_path", "") or "").rstrip("/")
-                          + "/" + _sub["name"]).strip("/")
-                if p.startswith(_datep + "/") or p == _datep:
-                    labels.append(n)
-                else:
-                    labels.append("%s（%s）" % (n, p or "根目錄"))
+            in_date = any(s in _date_names for s in p.split("/"))
+            if is_video and _date_names and not in_date:
+                labels.append("%s（%s）" % (n, p or "根目錄"))
             else:
                 labels.append(n)
         # Preselect: exact canonical name, then any name containing the date.
@@ -565,9 +573,9 @@ def _odrive_panel(section, label, is_video=False):
         else:
             picked = None
             if is_video:
-                st.info("SharePoint **`%s`** 資料夾中目前找不到任何 "
+                st.info("SharePoint %s 資料夾中目前找不到任何 "
                         "**MP4** 檔（含子資料夾）。上載家事影片後即可在此選擇。"
-                        % cfg.get("folder_path", ""))
+                        % where)
             else:
                 st.info("該日期資料夾中沒有可下載的簡報檔。")
         if st.button("⚡ 從 SharePoint 讀取並儲存", type="primary",

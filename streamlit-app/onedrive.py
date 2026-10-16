@@ -18,12 +18,17 @@ and the following in st.secrets under `[onedrive]`:
     files = onedrive.files_in_date_folder(cfg, folder_path, date)
     ok, err = onedrive.download_to(cfg, file_id, "data/decks/…/x.pptx")
 '''
+import datetime
 import os
 import tempfile
 import time
 import urllib.parse
 
 import requests
+
+# Past Sundays are moved into this subfolder of the configured folder_path
+# (e.g. "Sunday PowerPoint Files/_Archive/2026.0927/").
+ARCHIVE_DIR = "_Archive"
 
 _AUTH_URL = "https://login.microsoftonline.com/%s/oauth2/v2.0/token"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -72,10 +77,12 @@ def _site_ref(cfg):
     return "%s/sites/%s:/%s" % (_GRAPH, host, site_path.lstrip("/"))
 
 
-def _list_items(cfg, drive_path):
+def _list_items(cfg, drive_path, missing_ok=False):
     """List drive items under a drive-relative path.
     Root folder: pass "" -> /drive/root/children.
-    Returns [{id, name, size, folder}]."""
+    Returns [{id, name, size, folder}].
+    When missing_ok is True a missing folder (HTTP 404) yields [] instead of
+    raising — used to probe the optional _Archive folder."""
     site = _site_ref(cfg)
     # Path-based site addressing needs an extra ':' before /drive, the
     # site-id form does not.
@@ -90,6 +97,8 @@ def _list_items(cfg, drive_path):
     while base:
         resp = requests.get(base, headers=headers, timeout=30)
         if resp.status_code != 200:
+            if missing_ok and resp.status_code == 404:
+                return []
             raise RuntimeError(
                 "OneDrive 列表失敗 (%s)：%s" % (resp.status_code, resp.text[:300]))
         data = resp.json()
@@ -115,23 +124,55 @@ def _date_variants(date):
     return out
 
 
-def list_files(cfg, folder_path):
+def is_past(date, today=None):
+    """True when a date is before today — such weeks have been moved into the
+    `_Archive` folder.  Accepts YYYY.MM.DD, YYYY-MM-DD and YYYY.mmdd (the
+    folder convention); unparseable dates are not past."""
+    try:
+        parts = [int(x) for x in str(date).replace("-", ".").split(".") if x]
+    except (TypeError, ValueError):
+        return False
+    if len(parts) == 3:
+        y, m, d = parts
+    elif len(parts) == 2 and parts[1] >= 100:  # YYYY.mmdd, e.g. 2026.1011
+        y, m, d = parts[0], parts[1] // 100, parts[1] % 100
+    else:
+        return False
+    try:
+        when = datetime.date(y, m, d)
+    except ValueError:
+        return False
+    return when < (today or datetime.date.today())
+
+
+def search_folders(folder_path, archive=False):
+    """Ordered drive-relative roots to search for a date's files: the live
+    folder first, then its `_Archive` subfolder when archive is True (past
+    Sundays are moved there, e.g. "Sunday PowerPoint Files/_Archive")."""
+    base = (folder_path or "").strip("/")
+    roots = [base]
+    if archive:
+        roots.append(("%s/%s" % (base, ARCHIVE_DIR)) if base else ARCHIVE_DIR)
+    return roots
+
+
+def list_files(cfg, folder_path, missing_ok=False):
     """List files directly inside a drive folder (by path)."""
-    items = _list_items(cfg, folder_path or "")
+    items = _list_items(cfg, folder_path or "", missing_ok=missing_ok)
     return [f for f in items if not f.get("folder")]
 
 
-def folders(cfg, folder_path):
+def folders(cfg, folder_path, missing_ok=False):
     """List drive folders directly inside a folder (by path)."""
-    items = _list_items(cfg, folder_path or "")
+    items = _list_items(cfg, folder_path or "", missing_ok=missing_ok)
     return [f for f in items if f.get("folder")]
 
 
-def _date_subfolder(cfg, folder_path, date):
+def _date_subfolder(cfg, folder_path, date, missing_ok=False):
     """Best guess of the per-date subfolder: exact name match first, then any
     folder whose name contains one of the date spellings."""
     variants = _date_variants(date)
-    for f in folders(cfg, folder_path):
+    for f in folders(cfg, folder_path, missing_ok=missing_ok):
         name = (f.get("name") or "").strip()
         if (name in variants or
                 any(v in name for v in variants if len(v) >= 8)):
@@ -139,22 +180,27 @@ def _date_subfolder(cfg, folder_path, date):
     return None
 
 
-def files_in_date_folder(cfg, folder_path, date):
+def files_in_date_folder(cfg, folder_path, date, archive=False):
     """Return files under the per-date subfolder (name like 2026.09.20 /
-    2026-09-20 / 20260920 / 2026.0920). Falls back to the top folder's own
-    files when no matching subfolder exists."""
-    sub = _date_subfolder(cfg, folder_path, date)
-    if sub:
-        items = _list_items(cfg,
-                            (folder_path or "").rstrip("/") + "/" + sub["name"])
-        return [f for f in items if not f.get("folder")]
+    2026-09-20 / 20260920 / 2026.0920).
+
+    Looks in the configured folder first and, when archive is True (a past
+    Sunday), in its `_Archive` subfolder as well.  Falls back to the configured
+    folder's own files when no matching subfolder exists anywhere."""
+    for root in search_folders(folder_path, archive):
+        sub = _date_subfolder(cfg, root, date, missing_ok=True)
+        if sub:
+            path = ("%s/%s" % (root, sub["name"])) if root else sub["name"]
+            items = _list_items(cfg, path)
+            return [f for f in items if not f.get("folder")]
     return list_files(cfg, folder_path)
 
 
-def find_mp4s(cfg, folder_path=None, limit=300):
+def find_mp4s(cfg, folder_path=None, limit=300, missing_ok=False):
     """Recursively list all .mp4 files under a drive folder (default: drive
     root).  Returns [{id, name, size, path}] where path is drive-relative
-    ('' for the root's own files, 'sub/name.mp4' inside folders)."""
+    ('' for the root's own files, 'sub/name.mp4' inside folders).
+    With missing_ok, a missing root folder (HTTP 404) yields []."""
     site = _site_ref(cfg)
     sep = ":" if not (cfg.get("site_id") or "").strip() else ""
     headers = {"Authorization": "Bearer %s" % _access_token(cfg)}
@@ -163,13 +209,17 @@ def find_mp4s(cfg, folder_path=None, limit=300):
     queue = [(root, "%s%s/drive/root/children" % (site, sep))] if not root else [
         (root, "%s%s/drive/root:/%s:/children" % (site, sep,
                                                   urllib.parse.quote(root, safe="/")))]
+    first = True
     while queue and len(out) < limit:
         rel, url = queue.pop(0)
         while url and len(out) < limit:
             resp = requests.get(url, headers=headers, timeout=30)
             if resp.status_code != 200:
+                if missing_ok and first and resp.status_code == 404:
+                    return []
                 raise RuntimeError(
                     "OneDrive 列表失敗 (%s)：%s" % (resp.status_code, resp.text[:300]))
+            first = False
             data = resp.json()
             for it in data.get("value", []):
                 name = it.get("name", "")
