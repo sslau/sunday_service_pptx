@@ -1712,8 +1712,11 @@ def _pick_book(select_key, ref_key):
 
 
 VERSION_OPTIONS = ["和合本", "和修版", "新譯本"]
+# Note written onto the 出處 field (shown in the editor and on the slide).  The
+# 和修版 translation is FHL's `rcuv` code, which the bible site itself labels
+# 和合本2010 — the app shows it by the name the congregation uses, 和修版.
 VERSION_NOTE = {"和合本": "和合本",
-                "和修版": "和合本2010", "新譯本": "新譯本"}
+                "和修版": "和修版", "新譯本": "新譯本"}
 
 # 經文 size floors shared by the widgets and the stored-week clamp.
 REF_SIZE_MIN, REF_SIZE_MAX = 20, 90
@@ -1835,13 +1838,18 @@ def _strip_ref_note(ref):
 
 
 def _ref_version_index(ref):
-    """Index into VERSION_OPTIONS matching the note currently on the ref (0)."""
+    """Index into VERSION_OPTIONS matching the note currently on the ref (0).
+
+    Compares by FHL version code, so a legacy `（和合本2010）` note still
+    selects the 和修版 option (both are `rcuv`)."""
     s = str(ref).strip()
     for o, c in (("（", "）"), ("(", ")")):
         if s.endswith(c) and o in s:
             note = s[s.rfind(o) + 1:-1].strip()
+            code = bible.version_code(note)
             for i, opt in enumerate(VERSION_OPTIONS):
-                if note == VERSION_NOTE[opt]:
+                if note == VERSION_NOTE[opt] or (
+                        code and code == bible.version_code(VERSION_NOTE[opt])):
                     return i
             break
     return 0

@@ -118,12 +118,25 @@ def _num(value, default):
         return default
 
 
+# FHL's `rcuv` translation was once written as 和合本2010; the editor and slides
+# now call it 和修版.  Rewrite the legacy label inside stored 出處/經文 references
+# so weeks saved before the rename display correctly without a manual re-pick.
+_REF_LABEL_FIXES = (("和合本2010版", "和修版"), ("和合本2010", "和修版"))
+
+
+def _canon_ref(ref):
+    s = str(ref or "")
+    for old, new in _REF_LABEL_FIXES:
+        s = s.replace(old, new)
+    return s
+
+
 def normalize_week(w):
     """Coerce an arbitrary dict into a safe week shape."""
     w = dict(w or {})
     w["date"] = str(w.get("date") or "").strip()
     psalm = dict(w.get("psalm") or {})
-    psalm["ref"] = str(psalm.get("ref") or "")
+    psalm["ref"] = _canon_ref(psalm.get("ref"))
     psalm["ref_size"] = _num(psalm.get("ref_size"), 48)
     psalm["font_size"] = _num(psalm.get("font_size"), 44)
     psalm["verses"] = [str(v) for v in (psalm.get("verses") or []) if str(v).strip()]
@@ -160,7 +173,7 @@ def normalize_week(w):
     w["hymns"] = hymns
 
     scripture = dict(w.get("scripture") or {})
-    scripture["ref"] = str(scripture.get("ref") or "")
+    scripture["ref"] = _canon_ref(scripture.get("ref"))
     scripture["ref_size"] = _num(scripture.get("ref_size"), 48)
     scripture["font_size"] = _num(scripture.get("font_size"), 44)
     scripture["max_lines"] = _num(scripture.get("max_lines"), 4)
@@ -172,6 +185,7 @@ def normalize_week(w):
     for key, default in (("title", ""), ("title_2", ""), ("scripture", ""),
                          ("speaker", ""), ("date", w.get("date", ""))):
         sermon[key] = str(sermon.get(key) or default)
+    sermon["scripture"] = _canon_ref(sermon.get("scripture"))
     sermon["ref_size"] = _num(sermon.get("ref_size"), 28)
     slides = []
     for s in (sermon.get("slides") or []):
