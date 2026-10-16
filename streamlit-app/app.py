@@ -1857,14 +1857,16 @@ def _ref_version_index(ref):
 
 def _pick_version(select_key, ref_key, target_key=None, section=None):
     """Version radio callback: set/replace the `（版本）` note on the 出處 field
-    then auto-refetch the 內容 (like the fhl.net button) in that translation."""
+    then auto-refetch the 內容 (like the fhl.net button) in that translation.
+
+    The radio keeps its value (highlighted) — the note it writes onto 出處 is
+    mirrored back onto the radio on the next run, see `_scripture_editor`."""
     label = st.session_state.get(select_key)
     if not label:
         return
     note = f"（{VERSION_NOTE[label]}）"
     ref = _strip_ref_note(st.session_state.get(ref_key) or "")
     st.session_state[ref_key] = f"{ref}{note}" if ref else ""
-    st.session_state[select_key] = None
     if ref and target_key:
         _fetch_into(ref_key, target_key, section)
 
@@ -2723,10 +2725,19 @@ def _scripture_editor(prefix, section=None):
     st.session_state.setdefault(ref_text_key, sv(f"{prefix}_ref"))
     st.text_input("出處", key=ref_text_key,
                   placeholder="羅馬書 12:1-8")
+    ver_key = K(f"{prefix}_version")
+    # Keep the version radio in step with the 出處 note: whichever version the
+    # reference names — chosen here, typed into 出處, or loaded from a saved
+    # week — stays highlighted.  Assign the key before the widget is created so
+    # the highlight follows 出處 (no separate index conflict).
+    ref_now = str(sv(f"{prefix}_ref")).strip()
+    if _strip_ref_note(ref_now) != ref_now:
+        st.session_state[ver_key] = VERSION_OPTIONS[_ref_version_index(ref_now)]
+    elif st.session_state.get(ver_key) not in VERSION_OPTIONS:
+        st.session_state[ver_key] = VERSION_OPTIONS[0]
     st.radio("譯本版本", VERSION_OPTIONS, horizontal=True,
-             index=_ref_version_index(sv(f"{prefix}_ref")),
-             key=K(f"{prefix}_version"), on_change=_pick_version,
-             args=(K(f"{prefix}_version"), K(f"{prefix}_ref"),
+             key=ver_key, on_change=_pick_version,
+             args=(ver_key, K(f"{prefix}_ref"),
                    K(f"{prefix}_verses"), section))
     st.button("從 fhl.net 聖經網輸入", type="primary",
               key=K(f"{prefix}_load"), use_container_width=True,
