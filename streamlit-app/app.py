@@ -3114,12 +3114,12 @@ with tab_edit:
                 st.caption("此節**可選**：不需要可直接按「下一步」略過。"
                            "要加入時，可填寫以下內容現場編譯；"
                            "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
-            _song_font_selector(
-                "歌詞字級（pt）",
-                hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
             _song_color_selector(
                 hint="與「詩歌敬拜」共用同一設定"
                      "（白字＋黑陰影／黑字＋白陰影）。")
+            _song_font_selector(
+                "歌詞字級（pt）",
+                hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
