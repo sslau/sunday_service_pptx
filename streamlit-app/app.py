@@ -1796,9 +1796,9 @@ def _song_font_selector(label, hint=None):
         st.caption(hint)
 
 
-def _song_color_selector():
+def _song_color_selector(hint=None):
     """歌詞文字顏色：白字＋黑陰影（適合深色背景）或黑字＋白陰影（適合淺色背景）。
-    排版與字級選擇器一致；舊週次若無此設定則預設白字。"""
+    排版與字級選擇器一致；舊週次若無此設定則預設白字。詩歌敬拜／詩歌回應共用。"""
     opts = ["white", "black"]
     cur = str(sv("hymn_text_color", "white") or "white")
     if cur not in opts:
@@ -1813,6 +1813,8 @@ def _song_color_selector():
                                else "黑字＋白陰影（適合淺色背景）"),
         key=K("hymn_text_color"),
         label_visibility="collapsed")
+    if hint:
+        st.caption(hint)
 
 
 def _strip_ref_note(ref):
@@ -3115,6 +3117,9 @@ with tab_edit:
             _song_font_selector(
                 "歌詞字級（pt）",
                 hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
+            _song_color_selector(
+                hint="與「詩歌敬拜」共用同一設定"
+                     "（白字＋黑陰影／黑字＋白陰影）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):

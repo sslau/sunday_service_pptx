@@ -220,7 +220,8 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - A single response hymn with the same fields as Hymns: **one lyric editor box**
   (a blank line separates slides, with a running stanza count), Title / English
   title / Songbook / Music / Lyrics, background, lyric-library search.
-  **The lyric font size is shared with Hymns.**
+  **The lyric font size and text colour are shared with Hymns** (set them here
+  or in the Hymns step).
 - You can also **upload a ready-made `.pptx`** (the file wins); otherwise the
   page content is compiled live.
 - The "🎶 產生詩歌回應的投影片" button at the **bottom** of this section
