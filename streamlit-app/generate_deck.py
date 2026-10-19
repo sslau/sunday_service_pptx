@@ -28,8 +28,10 @@ import os
 import re
 import shutil
 import sys
+import uuid
 
 import bible  # noqa: E402
+from lxml import etree
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -1424,8 +1426,56 @@ def build_section_deck(section, cfg, template=None):
     return pres
 
 
+# PowerPoint "sections" (檢視 → 章節) are not modelled by python-pptx.  A deck
+# stores them in the presentation part as an extension keyed to the slide ids,
+# exactly as PowerPoint's own 「新增節」 writes them.
+P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+SECTION_EXT_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
+
+
+def set_sections(pres, groups):
+    """Label the built slides with PowerPoint sections.
+
+    `groups` is [(name, count), ...] in slide order; empty groups are skipped
+    and the counts must add up to the slide total — a mis-count leaves the deck
+    untouched rather than writing a broken section list.  python-pptx has no
+    sections API, so the <p14:sectionLst> extension PowerPoint 2010+ writes is
+    emitted by hand; 檢視 → 章節 and the 投影片縮圖窗格 then show the groups.
+    """
+    groups = [(str(name), int(n)) for name, n in groups if n > 0]
+    sldIds = pres.slides._sldIdLst.findall(qn("p:sldId"))
+    if not groups or sum(n for _name, n in groups) != len(sldIds):
+        return
+    sectionLst = etree.Element("{%s}sectionLst" % P14_NS, nsmap={"p14": P14_NS})
+    i = 0
+    for name, n in groups:
+        section = etree.SubElement(sectionLst, "{%s}section" % P14_NS)
+        section.set("name", name or "1")
+        section.set("id", "{%s}" % str(uuid.uuid4()).upper())
+        lst = etree.SubElement(section, "{%s}sldIdLst" % P14_NS)
+        for sldId in sldIds[i:i + n]:
+            etree.SubElement(lst, "{%s}sldId" % P14_NS).set(
+                "id", sldId.get("id"))
+        i += n
+    extLst = pres._element.find(qn("p:extLst"))
+    if extLst is None:
+        extLst = etree.SubElement(pres._element, qn("p:extLst"))
+    for old in extLst.findall(qn("p:ext")):
+        if old.get("uri") == SECTION_EXT_URI:
+            extLst.remove(old)
+    ext = etree.SubElement(extLst, qn("p:ext"))
+    ext.set("uri", SECTION_EXT_URI)
+    ext.append(sectionLst)
+
+
 def build(pres, cfg):
     clear_slides(pres)
+    section_marks = []
+
+    def mark(name):
+        """Record a service section start: slides already on the deck."""
+        section_marks.append((name, len(pres.slides._sldIdLst)))
+
     songs_path = None      # external songs pptx (songs_import), if used
     sermons_path = None    # external sermon pptx (sermon_import), if used
     announcements_path = None  # external announcements pptx, if used
@@ -1456,11 +1506,13 @@ def build(pres, cfg):
     typeface = cfg.get("call_font", "DFKai-SB")
 
     # opening（welcome image）
+    mark("歡迎")
     welcome = cfg.get("welcome_image") or os.path.join(
         os.getcwd(), "media", "welcome.jpg")
     _image_only(pres, welcome)
 
     # call（宣召 image）
+    mark("宣召經文")
     call = cfg.get("call_image") or os.path.join(
         os.getcwd(), "media", "call_to_worship.jpg")
     _image_only(pres, call)
@@ -1478,6 +1530,7 @@ def build(pres, cfg):
                             whole_verses=(psalm.get("layout") != "paragraph"))
 
     # 詩歌敬拜 header
+    mark("詩歌敬拜")
     add_image("worship_header")
 
     # hymns: normally generated here; with songs_import the complete songs
@@ -1507,10 +1560,12 @@ def build(pres, cfg):
         build_hymns_section(pres, cfg, hymns)
 
     # 禱告、主禱文
+    mark("禱告")
     add_image("prayer_header")
     add_image("lords_prayer")
 
     # 獻詩（緊接禱告之後；上載的 pptx 原封不動合併，可選）
+    mark("獻詩")
     if cfg.get("offering_import"):
         offering_path = locate_offering_file(cfg)
         if offering_path:
@@ -1528,6 +1583,7 @@ def build(pres, cfg):
 
     # 讀經 header + scripture verses（fresh reading slides）。header 照舊輸出，
     # 經文頁面則可由雲端 scripture_<date>.pptx 取代。
+    mark("讀經")
     add_image("scripture_header")
     if not import_override(pres, cfg, "scripture_import", "scripture_file",
                            locate_scripture_file, "scripture"):
@@ -1541,6 +1597,7 @@ def build(pres, cfg):
                             whole_verses=(scripture.get("layout") != "paragraph"))
 
     # 信息 header（always follows 經文）＋（合併講道 pptx）或產生過場/題目/內容
+    mark("講道信息")
     add_image("sermon_header")
     if cfg.get("sermon_import"):
         sermons_path = locate_sermon_file(cfg)
@@ -1562,6 +1619,7 @@ def build(pres, cfg):
         build_sermon_section(pres, cfg, sermon)
 
     # 詩歌回應（緊接信息之後、聖餐之前；上載的 pptx 以檔案為準，否則由內容編譯）
+    mark("詩歌回應")
     response_has_content = bool(cfg.get("response", {}).get("title") or
                                 cfg.get("response", {}).get("verses"))
     if cfg.get("response_import"):
@@ -1594,6 +1652,7 @@ def build(pres, cfg):
     # 聖餐、使徒信經（first Sunday only）。communion_import 開啟時，雲端
     # communion_<date>.pptx 整組取代內建的聖餐＋使徒信經兩頁。取回檔案本身
     # 就代表這一場要有自訂聖餐頁，故未勾選聖餐時也會採用。
+    mark("聖餐")
     if cfg.get("communion") or cfg.get("communion_import"):
         if not import_override(pres, cfg, "communion_import", "communion_file",
                                locate_communion_file, "communion"):
@@ -1602,12 +1661,14 @@ def build(pres, cfg):
                 add_image("apostles_creed")
 
     # 三一頌
+    mark("三一頌與祝福")
     add_image("doxology")
 
     # 祝福（緊接三一頌）
     add_image("benediction")
 
     # 歡迎/家事分享（announcements.jpg）
+    mark("家事分享")
     add_image("announce_header")
 
     # announcements: imported external deck (announcements_<date>.pptx) or
@@ -1633,7 +1694,16 @@ def build(pres, cfg):
         build_announcements_section(pres, cfg, announcements)
 
     # 結束（最後一頁，接在家事分享之後）
+    mark("結束")
     add_image("closing")
+
+    # Group the finished deck into PowerPoint sections (empty ones drop out and
+    # each mark runs up to the next, so 序樂/歡迎 is just the welcome slide and
+    # 詩歌敬拜 is its header card plus the hymns, etc.).
+    bounds = [start for _name, start in section_marks]
+    bounds.append(len(pres.slides._sldIdLst))
+    set_sections(pres, [(name, bounds[i + 1] - bounds[i])
+                        for i, (name, _start) in enumerate(section_marks)])
 
 
 def plan(cfg):

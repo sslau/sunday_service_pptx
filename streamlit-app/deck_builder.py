@@ -16,9 +16,11 @@ import re
 import tempfile
 
 from generate_deck import (_blank_layout, build, build_section_deck, plan)  # noqa: E402
+from lxml import etree
 from pptx import Presentation
 
 _PPTX_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "blank_16x9.pptx")
@@ -428,12 +430,31 @@ def prepend_video_slide(pptx_data, mp4_bytes, poster_bytes):
         last = sldIdLst[-1]
         sldIdLst.remove(last)
         sldIdLst.insert(0, last)
+        _join_first_section(pres, last)
         out = io.BytesIO()
         pres.save(out)
         return out.getvalue()
     finally:
         os.unlink(mp4_path)
         os.unlink(poster_path)
+
+
+def _join_first_section(pres, sldId):
+    """Put a freshly-prepended slide into the deck's first PowerPoint section.
+
+    `prepend_video_slide` moves its new slide to the front of the deck; without
+    this it would be the one slide outside every section (PowerPoint files it
+    under an implicit 預設節).  No-op when the deck carries no sections."""
+    sectionLst = pres._element.find(".//{%s}sectionLst" % _P14_NS)
+    first = (sectionLst.find("{%s}section" % _P14_NS)
+             if sectionLst is not None else None)
+    lst = (first.find("{%s}sldIdLst" % _P14_NS)
+           if first is not None else None)
+    if lst is None:
+        return
+    el = etree.Element("{%s}sldId" % _P14_NS)
+    el.set("id", sldId.get("id"))
+    lst.insert(0, el)
 
 
 def _set_media_autoplay_loop(slde, spid):
