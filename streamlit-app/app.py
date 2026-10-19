@@ -20,6 +20,7 @@ import uuid
 import html
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
                    layout="wide")
@@ -244,34 +245,41 @@ def _bg_picker(wkey, default):
             if o != opt:
                 st.session_state[K(f"{wkey}_bgck_{j}")] = False
 
-    thumb_cols = st.columns(len(opts) if opts else 1)
-    for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
-        with col:
-            chosen = opt == current
-            cand = ""
-            if opt:
-                cand = opt if os.path.isfile(opt) else \
-                    os.path.join(os.getcwd(), opt)
-            name = ("依序 song_bg1…" if not opt
-                    else os.path.splitext(os.path.basename(opt))[0])
-            if os.path.isfile(cand):
-                st.image(cand, width=84, caption=("✓ " + name if chosen else name))
-            else:
-                st.markdown(
-                    '<div style="display:flex;align-items:center;'
-                    'justify-content:center;height:63px;border:'
-                    + ("2px solid var(--accent);" if chosen else "1px dashed var(--line);")
-                    + 'border-radius:8px;color:'
-                    + ("var(--accent);font-weight:700;" if chosen else "var(--muted);")
-                    + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
-                    '</div>', unsafe_allow_html=True)
-            # Keyed checkboxes: the auto-generated id of two identical unkeyed
-            # ones collides, so each gets a key; the callback keeps the row
-            # acting like a radio (see `_choose`).
-            st.checkbox("✓ 使用中" if chosen else "選用",
-                        value=chosen,
-                        key=K(f"{wkey}_bgck_{i}"),
-                        on_change=_choose, args=(opt,))
+    # `bgpick_*` is a CSS hook (see _CSS): the thumbnails stay in one row on a
+    # wide desktop but wrap into a grid on a phone instead of stacking
+    # full-width, and on a small laptop they reflow instead of squeezing.
+    with st.container(key=f"bgpick_{wkey}"):
+        thumb_cols = st.columns(len(opts) if opts else 1)
+        for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
+            with col:
+                chosen = opt == current
+                cand = ""
+                if opt:
+                    cand = opt if os.path.isfile(opt) else \
+                        os.path.join(os.getcwd(), opt)
+                name = ("依序 song_bg1…" if not opt
+                        else os.path.splitext(os.path.basename(opt))[0])
+                if os.path.isfile(cand):
+                    st.image(cand, width=84,
+                             caption=("✓ " + name if chosen else name))
+                else:
+                    st.markdown(
+                        '<div style="display:flex;align-items:center;'
+                        'justify-content:center;height:63px;border:'
+                        + ("2px solid var(--accent);" if chosen
+                           else "1px dashed var(--line);")
+                        + 'border-radius:8px;color:'
+                        + ("var(--accent);font-weight:700;" if chosen
+                           else "var(--muted);")
+                        + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
+                        '</div>', unsafe_allow_html=True)
+                # Keyed checkboxes: the auto-generated id of two identical
+                # unkeyed ones collides, so each gets a key; the callback keeps
+                # the row acting like a radio (see `_choose`).
+                st.checkbox("✓ 使用中" if chosen else "選用",
+                            value=chosen,
+                            key=K(f"{wkey}_bgck_{i}"),
+                            on_change=_choose, args=(opt,))
     st.caption("點縮圖下方的勾選框即套用該背景（第一格「依序」＝照既定順序，"
                "同一個背景只會勾一個）。")
     up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
@@ -1263,6 +1271,9 @@ def _focus_hymn(uid, uids):
     """
     for u in uids:
         st.session_state[K(f"hymn_exp_{u}")] = (u == uid)
+    # Ask `_jump_to_hymn_edit` (end of the step body) to scroll the lyric
+    # editor into view once the panel has re-rendered open.
+    st.session_state[K("_focus_hymn_uid")] = uid
     h = next((x for x in _get_ui("hymns") if x.get("_id") == uid), None)
     name = (_song_title(uid, h) if h is not None else "") or "（未命名）"
     st.toast(f"已展開：{name}")
@@ -1387,7 +1398,7 @@ def _lyric_search_panel(uid_kind, uid):
     except Exception as exc:                       # unreadable library
         st.warning(f"歌詞庫無法載入：{exc}")
         return
-    with st.expander("🔍 歌詞庫搜尋"):
+    with st.expander("🔍 歌詞庫搜尋", key=K(f"{base}ly_exp")):
         if not len(lib):
             st.info(f"歌詞庫是空的（預期在 `lyrics/*/{lyric_search.CACHE_DIRNAME}/`）。")
             return
@@ -1396,8 +1407,16 @@ def _lyric_search_panel(uid_kind, uid):
                    f"{'、'.join(books)}。"
                    "空格分開多個詞＝同一頁要全部找到；忽略標點與空格，"
                    "所以跨行、跨頁的句子也找得到。")
-        q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
-                          placeholder="例如 中國啊　或　讓我們 愛")
+        # A form so the search runs on one action: press Enter in the box, or
+        # tap 「🔍 搜尋」. The button matters on phones — with a Chinese IME the
+        # first Enter only commits the typed characters, so relying on Enter
+        # alone made the search look like it needed two presses. A form also
+        # stops the whole page re-running on every keystroke.
+        with st.form(f"{base}lyform", clear_on_submit=False, border=False):
+            q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
+                              placeholder="例如 中國啊　或　讓我們 愛")
+            st.form_submit_button("🔍 搜尋", type="primary",
+                                  use_container_width=True)
         q = (q or "").strip()
         if not q:
             return
@@ -1607,6 +1626,34 @@ div[role="dialog"] img, div[data-testid="stModal"] img {
   display:block; margin:0 auto;
   width:auto !important; height:auto !important;
   max-width:100%; max-height:calc(100vh - 210px); }
+
+/* --- Responsive trimming ------------------------------------------------
+   The step nav is a 9-column st.columns row and the background picker a
+   10-column one.  Streamlit keeps them side-by-side and squeezes below
+   ~1,300px (the step buttons collapse to ~48px on a 1024 laptop) and only
+   stacks full-width on phones.  Let those two rows size to their content and
+   wrap instead: one row on a wide desktop, a few per row on a tablet, and a
+   sensible grid on a phone.  Scoped to the keyed containers so every other
+   st.columns row is untouched. */
+.st-key-stepnav [data-testid="stHorizontalBlock"],
+[class*="st-key-bgpick_"] [data-testid="stHorizontalBlock"] {
+  flex-wrap:wrap; gap:.4rem; }
+.st-key-stepnav [data-testid="stColumn"] {
+  flex:1 1 6rem; min-width:6rem; }
+[class*="st-key-bgpick_"] [data-testid="stColumn"] {
+  flex:0 0 5.5rem; min-width:5.5rem; max-width:5.5rem; }
+
+@media (max-width: 640px) {
+  .block-container { padding-top:1rem; padding-bottom:2rem; }
+  .hero { padding:1.1rem 1.2rem; }
+  .hero-date { font-size:1.4rem; }
+  .hero-sm .hero-date { font-size:1.2rem; }
+  .sec-head { flex-wrap:wrap; }
+  div[role="dialog"] { width:96vw !important; max-width:96vw; }
+  [role="radiogroup"] { flex-wrap:wrap; row-gap:.4rem; }
+  /* Comfortable tap targets (Streamlit's default is ~40px). */
+  .stButton > button, .stDownloadButton > button { min-height:2.7rem; }
+}
 </style>
 """
 
@@ -2062,16 +2109,61 @@ def _step_marker(step):
     st.progress(step / len(EDIT_STEPS),
                 text=f"第 {step} / {len(EDIT_STEPS)} 步驟 · "
                      f"{EDIT_STEPS[step - 1][0]}")
-    cols = st.columns(len(EDIT_STEPS))
-    for i, (_title, short) in enumerate(EDIT_STEPS):
-        idx = i + 1
-        if cols[i].button(f"{idx} {short}", key=K(f"stepj_{idx}"),
-                          type="primary" if idx == step else "secondary",
-                          use_container_width=True):
-            if idx != step:
-                st.session_state[K("edit_step")] = idx
-                st.rerun()
+    # `stepnav` is a CSS hook (see _CSS): the row stays one line on a wide
+    # desktop, but the buttons wrap by content width on a phone/small laptop.
+    with st.container(key="stepnav"):
+        cols = st.columns(len(EDIT_STEPS))
+        for i, (_title, short) in enumerate(EDIT_STEPS):
+            idx = i + 1
+            if cols[i].button(f"{idx} {short}", key=K(f"stepj_{idx}"),
+                              type="primary" if idx == step else "secondary",
+                              use_container_width=True):
+                if idx != step:
+                    st.session_state[K("edit_step")] = idx
+                    st.rerun()
     st.caption("頂端按鈕可按**任意順序**填寫，不需要依序完成。")
+
+
+def _jump_to_section(step):
+    """Scroll the main pane to the top of the picked step's content.
+
+    Streamlit restores the browser scroll offset across a rerun, so clicking a
+    step button swaps the content below the step list but the viewport can stay
+    where it was — with nine full-width buttons on a phone the selected section
+    can even start off-screen, so the click looks like it did nothing.  A
+    one-shot scroll on an actual step change makes the button feel like it
+    navigated.  Runs at the end of the step body, once the target exists.
+    """
+    prev = st.session_state.get(K("_shown_step"))
+    st.session_state[K("_shown_step")] = step
+    if prev is None or prev == step:
+        return
+    components.html(
+        "<script>try{var t=window.parent.document"
+        ".getElementById('step-top');"
+        "if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}"
+        "catch(e){}</script>",
+        height=0)
+
+
+def _jump_to_hymn_edit():
+    """Summary-card 「前往編輯」: scroll the song's 歌詞編輯 box into view.
+
+    `_focus_hymn` opens the right expander (before the rerun) and stashes the
+    uid; the expander body then renders an anchor at the lyric editor and this
+    emits the one-shot scroll at the end of the step body, once the anchor is
+    in the DOM.  Without it the panel opens but the viewport stays on the
+    summary strip.
+    """
+    uid = st.session_state.pop(K("_focus_hymn_uid"), None)
+    if not uid:
+        return
+    components.html(
+        "<script>try{var t=window.parent.document"
+        ".getElementById('hymn-edit-top');"
+        "if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}"
+        "catch(e){}</script>",
+        height=0)
 
 
 def _step_nav(step):
@@ -2926,6 +3018,8 @@ with tab_edit:
 
     _step_marker(step)
     st.divider()
+    # Anchor for the step-change scroll (see `_jump_to_section`).
+    st.markdown('<div id="step-top"></div>', unsafe_allow_html=True)
 
     if step == 1:
         with st.container(border=True):
@@ -3002,6 +3096,12 @@ with tab_edit:
                 # stay constant: a live title/段數 here changes the widget id on
                 # every keystroke and Streamlit remounts the panel shut.  The
                 # live title/status go on the line inside and in the strip above.
+                if st.session_state.get(K("_focus_hymn_uid")) == uid:
+                    # Anchor for the 「前往編輯」 scroll (see _jump_to_hymn_edit):
+                    # land on the 詩歌 N header so the whole song panel is in
+                    # view.  Only the focused song renders it, so the id is unique.
+                    st.markdown('<div id="hymn-edit-top"></div>',
+                                unsafe_allow_html=True)
                 with st.expander(f"詩歌 {i + 1}", key=K(f"hymn_exp_{uid}"),
                                  on_change="rerun"):
                     st.caption(
@@ -3027,10 +3127,11 @@ with tab_edit:
                                   value=sv(f"hymn_{uid}_lyricist",
                                            h.get("lyricist")),
                                   key=K(f"hymn_{uid}_lyricist"))
-                    with st.expander("🎨 背景圖"):
+                    with st.expander("🎨 背景圖", key=K(f"{uid}_bg_exp")):
                         _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
                     st.divider()
-                    with st.expander("▶ 預覽這首詩歌的 slides"):
+                    with st.expander("▶ 預覽這首詩歌的 slides",
+                                     key=K(f"{uid}_pv_exp")):
                         pcol1, pcol2 = st.columns([0.42, 0.58])
                         if pcol1.button("🎬 產生這首詩歌的 slide",
                                         key=K(f"hymn_{uid}_preview_gen"),
@@ -3161,7 +3262,7 @@ with tab_edit:
             m2.text_input("曲", value=sv("resp_music"), key=K("resp_music"))
             m3.text_input("詞", value=sv("resp_lyricist"),
                           key=K("resp_lyricist"))
-            with st.expander("🎨 背景圖"):
+            with st.expander("🎨 背景圖", key=K("resp_bg_exp")):
                 _bg_picker("resp_bg", "")
 
             # 一次將 詩歌回應 編譯成「一份」.pptx 供下載（唯讀，不寫入
@@ -3233,6 +3334,8 @@ with tab_edit:
                    "整場投影片的第一頁（勾選「併入第一頁」時，自動循環播放）。")
 
     st.divider()
+    _jump_to_section(step)
+    _jump_to_hymn_edit()
     _step_nav(step)
     if step >= len(EDIT_STEPS):
         st.success("全部步驟已完成 ✔　在左側面板按「📽 製成整場投影片」，"
