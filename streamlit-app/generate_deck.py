@@ -1181,6 +1181,19 @@ def _section_geometry(cfg, pres):
             cfg.get("call_font", "DFKai-SB"))
 
 
+def _song_font_size(pt):
+    """Lyric size in pt: the song's own 歌詞字級 wins, the week's hymn_font_max
+    otherwise; unusable values fall back to 52pt and nothing goes above the
+    60pt cap."""
+    try:
+        n = int(round(float(pt)))
+    except (TypeError, ValueError):
+        return 52
+    if n <= 0:
+        return 52
+    return min(60, n)
+
+
 _HYMN_PUNCT = re.compile(r"[，。、；：！？「」『』（）《》〈〉【】…—～·‧　,.!?;:]")
 _MAX_CHARS_PER_LINE = 19  # including punctuation marks
 
@@ -1219,7 +1232,10 @@ def build_hymns_section(pres, cfg, hymns):
         tsize = 70
         shadow = cfg.get("hymn_text_shadow", True)
         # 文字顏色／陰影配對：白字＋黑陰影（深色背景）或 黑字＋白陰影（淺色背景）。
-        white_text = str(cfg.get("hymn_text_color", "white")
+        # 每首詩歌可用 hymn["text_color"]／["font_pt"] 各自指定；留空時沿用整場的
+        # hymn_text_color／hymn_font_max（預設白字、52pt，字級上限 60pt）。
+        white_text = str(hymn.get("text_color")
+                         or cfg.get("hymn_text_color", "white")
                          or "white").lower() != "black"
         text_color = "FFFFFF" if white_text else "000000"
         shadow_color = "000000" if white_text else "FFFFFF"
@@ -1256,9 +1272,11 @@ def build_hymns_section(pres, cfg, hymns):
             total += len(verses)
         elif refrain:
             total += 1
-        # 歌詞字級：固定使用 hymn_font_max（預設 52pt、選單 48–54pt），
-        # 不隨行長縮小；行太長時由 word_wrap 自動換行。
-        song_size = int(cfg.get("hymn_font_max", 52) or 52)
+        # 歌詞字級：優先這首詩歌自己的 font_pt，否則用整場 hymn_font_max
+        # （預設 52pt、上限 60pt）。固定字級、不隨行長縮小；行太長時由
+        # word_wrap 自動換行。
+        song_size = _song_font_size(hymn.get("font_pt")
+                                    or cfg.get("hymn_font_max", 52))
         page = 0
 
         def add_verse(lines, bg=bg):

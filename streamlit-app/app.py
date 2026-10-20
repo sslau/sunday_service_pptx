@@ -784,6 +784,8 @@ def _seed_hymns(week):
             "music": h.get("music", ""),
             "lyricist": h.get("lyricist", ""),
             "bg": h.get("bg", ""),
+            "text_color": h.get("text_color", ""),
+            "font_pt": h.get("font_pt"),
             "refrain": "\n".join(h.get("refrain") or []),
             "repeat": bool(h.get("refrain_after_every_verse", True)),
             "stanzas": ["\n".join(s) for s in h.get("verses", [])] or [""],
@@ -922,6 +924,8 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "music", draft, sw.get("music", ""))
         _lapse(base + "lyricist", draft, sw.get("lyricist", ""))
         _lapse(base + "bg", draft, sw.get("bg", ""))
+        _lapse(base + "text_color", draft, sw.get("text_color", ""))
+        _lapse(base + "font_pt", draft, sw.get("font_pt"))
         _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
         _lapse(base + "repeat", draft,
                bool(sw.get("refrain_after_every_verse", True)))
@@ -957,10 +961,20 @@ def _slide_blocks(text):
 
 
 def _stanzas_to_text(stanzas):
-    """Stored 段 list (list of line-lists) -> the editor's blank-line separated
-    text, so the box and the stored week round-trip without loss."""
-    filled = ["\n".join(s) for s in (stanzas or [])
-              if s and any((ln or "").strip() for ln in s)]
+    """Stored 段 list -> the editor's blank-line separated text, so the box and
+    the stored week round-trip without loss.
+
+    Each 段 may arrive either as a list of lines (the stored week's shape) or
+    already newline-joined into one string (the `ui_hymns` seed's shape).  Only
+    the list form is joined here; a string is kept whole — joining it would
+    iterate it character by character and write one Chinese word per line."""
+    def block(s):
+        if isinstance(s, str):
+            return s.rstrip()
+        return "\n".join(s).rstrip()
+
+    filled = [b for b in (block(s) for s in (stanzas or []) if s)
+              if b.strip()]
     return "\n\n".join(filled)
 
 
@@ -999,6 +1013,8 @@ if f"{DATE}::ui_hymns" not in st.session_state:
         st.session_state[base + "music"] = h.get("music", "")
         st.session_state[base + "lyricist"] = h.get("lyricist", "")
         st.session_state[base + "bg"] = h.get("bg", "")
+        st.session_state[base + "text_color"] = h.get("text_color", "")
+        st.session_state[base + "font_pt"] = h.get("font_pt")
         st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
         st.session_state[base + "paste"] = _stanzas_to_text(
@@ -1172,6 +1188,9 @@ def assemble_hymn(date, ui):
         "lyricist": st.session_state.get(base + "lyricist",
                                         ui.get("lyricist", "")),
         "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
+        "text_color": st.session_state.get(base + "text_color",
+                                           ui.get("text_color", "")),
+        "font_pt": st.session_state.get(base + "font_pt", ui.get("font_pt")),
         "refrain": None,
         "refrain_after_every_verse": False,
         "verses": [split_lines(b) for b in _slide_blocks(paste)],
@@ -1827,11 +1846,14 @@ def _layout_radio(key):
 
 
 def _song_font_options(cur):
-    """歌詞字級選項：52pt（預設，置頂）往下遞減至 48pt。舊週次存有範圍外的
+    """歌詞字級選項：60pt（上限）遞減至 48pt，預設 52pt。舊週次存有範圍外的
     數值時一併補進，避免 selectbox 因值不在清單而報錯。"""
-    opts = list(range(52, 47, -1))          # 52, 51, 50, 49, 48
-    if cur not in opts:
-        opts.append(int(cur))
+    opts = list(range(60, 47, -1))          # 60, 59 … 49, 48
+    try:
+        if int(cur) not in opts:
+            opts.append(int(cur))
+    except (TypeError, ValueError):
+        pass
     return opts
 
 
@@ -1873,6 +1895,47 @@ def _song_color_selector(hint=None):
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
+
+
+def _hymn_style_controls(uid, h):
+    """一首詩歌專屬的歌詞文字顏色與歌詞字級（pt）——放在該首的「詩歌 N」編輯區裡。
+
+    兩者都提供「預設」：沿用上方全場的 hymn_text_color（白字／黑字）與
+    hymn_font_max（48–60pt、預設 52pt）。選了具體值便只套用這首詩歌，
+    由 generate_deck.build_hymns_section 讀 hymn["text_color"]／["font_pt"]。"""
+    color_opts = ["", "white", "black"]
+    cur_color = str(sv(f"hymn_{uid}_text_color", h.get("text_color", "")) or "")
+    if cur_color not in color_opts:
+        cur_color = ""
+    size_opts = [None] + list(range(60, 47, -1))
+    cur_size = sv(f"hymn_{uid}_font_pt", h.get("font_pt"))
+    if cur_size is not None:
+        try:
+            cur_size = int(cur_size)
+        except (TypeError, ValueError):
+            cur_size = None
+        if cur_size not in size_opts:
+            size_opts.append(cur_size)
+    c1, c2 = st.columns([1.6, 1.0], vertical_alignment="center")
+    with c1:
+        st.selectbox(
+            "歌詞文字顏色",
+            options=color_opts,
+            index=color_opts.index(cur_color),
+            format_func=lambda v: ("預設（跟隨全場）" if not v
+                                   else "白字＋黑陰影（適合深色背景）" if v == "white"
+                                   else "黑字＋白陰影（適合淺色背景）"),
+            key=K(f"hymn_{uid}_text_color"),
+            help="只套用這一首；「預設」跟隨上方的全場設定（白字＋黑陰影）。")
+    with c2:
+        st.selectbox(
+            "歌詞字級（pt）",
+            options=size_opts,
+            index=size_opts.index(cur_size),
+            format_func=lambda v: "預設" if v is None else f"{v} pt",
+            key=K(f"hymn_{uid}_font_pt"),
+            help="只套用這一首；「預設」跟隨上方的全場設定（52pt），"
+                 "可選 48–60pt。")
 
 
 def _strip_ref_note(ref):
@@ -3043,11 +3106,14 @@ with tab_edit:
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
-            _song_color_selector()
+            _song_color_selector(
+                hint="全部詩歌的**預設**顏色；個別詩歌可在其「詩歌 N」編輯區"
+                     "各自指定。")
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="固定字級（預設 52pt、可選 48–52pt），不隨行長縮小；"
-                     "行太長時自動換行。"
+                hint="全部詩歌的預設字級（可選 48–60pt、預設 52pt），"
+                     "固定字級不隨行長縮小、行太長時自動換行；"
+                     "個別詩歌可在其「詩歌 N」編輯區選自己的字級。"
                      "標點符號以空格取代（如「，」「。」→ 空白）。"
                      "每首詩歌可用下方「背景圖」各自指定背景。")
 
@@ -3127,6 +3193,7 @@ with tab_edit:
                                   value=sv(f"hymn_{uid}_lyricist",
                                            h.get("lyricist")),
                                   key=K(f"hymn_{uid}_lyricist"))
+                    _hymn_style_controls(uid, h)
                     with st.expander("🎨 背景圖", key=K(f"{uid}_bg_exp")):
                         _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
                     st.divider()
@@ -3166,6 +3233,7 @@ with tab_edit:
                 _add_item("hymns", {"_id": uuid.uuid4().hex[:8], "title": "",
                                     "subtitle": "", "source": "", "music": "",
                                     "lyricist": "", "bg": "",
+                                    "text_color": "", "font_pt": None,
                                     "refrain": "", "repeat": True,
                                     "stanzas": [""]})
                 st.rerun()
@@ -3243,11 +3311,11 @@ with tab_edit:
                            "要加入時，可填寫以下內容現場編譯；"
                            "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             _song_color_selector(
-                hint="與「詩歌敬拜」共用同一設定"
-                     "（白字＋黑陰影／黑字＋白陰影）。")
+                hint="與「詩歌敬拜」的預設設定共用（白字＋黑陰影／黑字＋"
+                     "白陰影）。")
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
+                hint="與「詩歌敬拜」的預設設定共用（48–60pt、預設 52pt）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
