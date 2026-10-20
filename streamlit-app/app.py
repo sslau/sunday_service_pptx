@@ -29,6 +29,7 @@ import bible  # noqa: E402
 import login_log  # noqa: E402
 import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
+import scripture_sheet  # noqa: E402
 from generate_deck import (IMAGE_SLIDES,  # noqa: E402
                            READING_BG, SERMON_GOLD, _DIVIDER_TITLES)
 from deck_builder import (build_deck,  # noqa: E402
@@ -54,7 +55,7 @@ os.chdir(HERE)
 try:
     secrets_obj = st.secrets
     st_secrets = {}
-    for key in ("store", "gcp_service_account"):
+    for key in ("store", "gcp_service_account", "scripture_sheet"):
         try:
             st_secrets[key] = secrets_obj[key]
         except Exception:
@@ -2878,6 +2879,8 @@ def _scripture_editor(prefix, section=None):
                "詩篇 34:1-3")
     ref_text_key = K(f"{prefix}_ref")
     st.session_state.setdefault(ref_text_key, sv(f"{prefix}_ref"))
+    if section == "scripture":
+        _autofill_from_sheet(prefix)
     st.text_input("出處", key=ref_text_key,
                   placeholder="羅馬書 12:1-8")
     ver_key = K(f"{prefix}_version")
@@ -2921,6 +2924,43 @@ def _scripture_editor(prefix, section=None):
     st.text_area("內容（貼上全部經文，自動分頁）",
                  key=verses_key, height=200)
     _fetch_status(f"{prefix}_verses")
+
+
+def _autofill_from_sheet(prefix):
+    """Seed 出處 from the team's Google Sheet and fetch its verses.
+
+    Runs once per date (a session flag) and only when 出處 is empty, so a saved
+    week or anything typed by hand always wins.  The sheet's 經文 column holds a
+    passage reference (e.g. `與#3 約 1：40-51`); `scripture_sheet` drops the
+    series marker and this drops the cleaned reference into 出處 and runs the
+    usual fhl.net fetch into 內容 — the same result as pressing 從 fhl.net
+    聖經網輸入.  Any problem (sheet not shared, offline, no row, fetch failed)
+    is reported as a short caption and never blocks the page."""
+    flag = K("scripture_sheet_%s" % DATE)
+    if st.session_state.get(flag):
+        return
+    st.session_state[flag] = True
+    if str(sv(f"{prefix}_ref") or "").strip():
+        return                      # a saved week / typed 出處 wins
+    try:
+        ref = scripture_sheet.fetch_reference(DATE, st_secrets)
+    except Exception as exc:
+        st.caption("ℹ️ 無法自動帶入讀經經文：" + str(exc))
+        return
+    if not ref:
+        st.caption("ℹ️ 經文表沒有 %s 的經文出處，可自行輸入。" % DATE)
+        return
+    st.session_state[K(f"{prefix}_ref")] = ref
+    try:
+        text, info = bible.fetch_reference(ref)
+    except Exception as exc:
+        st.caption("ℹ️ 已從經文表帶入出處「%s」，但載入經文失敗：%s"
+                   % (ref, exc))
+        return
+    st.session_state[K(f"{prefix}_verses")] = text
+    st.session_state[K(f"{prefix}_verses__err")] = ""
+    st.session_state[K(f"{prefix}_verses__info")] = (
+        "已對照經文表「%s」自動載入：%s" % (ref, info))
 
 
 def _render_scr_flow():
