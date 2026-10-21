@@ -876,6 +876,46 @@ def _draft_for(date):
     return st.session_state.setdefault(f"{date}::_draft", {})
 
 
+def _split_lyrics_damage(text):
+    """True when `text` looks like the legacy one-character-per-line damage.
+
+    An older seed joined a plain string character by character, so a poisoned
+    editor box (or an old session's draft) could hold each Chinese character on
+    its own line — `有` / `一` / `位` / `神`.  A real lyric line is never a
+    single character, so this fires when *most* non-empty lines are one CJK
+    character long.  The separator information is already lost in that shape, so
+    the caller replaces it with the clean stored value rather than guessing."""
+    nonempty = [ln.strip() for ln in str(text or "").split("\n") if ln.strip()]
+    if len(nonempty) < 4:
+        return False
+    one = [ln for ln in nonempty if len(ln) == 1]
+    if len(one) * 2 < len(nonempty):
+        return False
+    return any("\u4e00" <= ch <= "\u9fff" for ln in one for ch in ln)
+
+
+def _lapse_lyrics(key, draft, stored):
+    """`_lapse` for a lyric box, dropping the legacy character-split damage.
+
+    A session that ran the old seed can still carry the damaged text in its
+    draft (or live widget key).  When that text is the split shape and the store
+    holds real lyric lines, the store is the trustworthy one: the damaged value
+    is discarded so the box re-seeds from the sheet.  With nothing clean to fall
+    back on, the value is left as-is (a user may be mid-edit)."""
+    def damaged(v):
+        return bool(v) and _split_lyrics_damage(v)
+
+    if damaged(draft.get(key)) and str(stored or "").strip() \
+            and not _split_lyrics_damage(stored):
+        draft.pop(key, None)
+        st.session_state.pop(key, None)
+    elif damaged(st.session_state.get(key)) and str(stored or "").strip() \
+            and not _split_lyrics_damage(stored):
+        st.session_state.pop(key, None)   # damaged value yields to the store
+        draft.pop(key, None)
+    _lapse(key, draft, stored)
+
+
 def _lapse(key, draft, stored):
     """Keep one editor field's value alive across the step it is rendered on.
 
@@ -930,7 +970,7 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
         _lapse(base + "repeat", draft,
                bool(sw.get("refrain_after_every_verse", True)))
-        _lapse(base + "paste", draft, _stanzas_to_text(sw.get("verses", [])))
+        _lapse_lyrics(base + "paste", draft, _stanzas_to_text(sw.get("verses", [])))
     slides = (week.get("sermon") or {}).get("slides") or []
     for i, s in enumerate(st.session_state.get(f"{date}::ui_slides") or []):
         sw = slides[i] if i < len(slides) else {}
@@ -938,7 +978,7 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "title", draft, sw.get("title", ""))
         _lapse(base + "body", draft, "\n".join(sw.get("body") or []))
     rverses = (week.get("response") or {}).get("verses") or []
-    _lapse(f"{date}::resp_paste", draft, _stanzas_to_text(rverses))
+    _lapse_lyrics(f"{date}::resp_paste", draft, _stanzas_to_text(rverses))
 
 
 def _slide_blocks(text):
