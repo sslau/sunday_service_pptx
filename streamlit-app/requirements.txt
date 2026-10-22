@@ -3,6 +3,11 @@ python-pptx==1.0.2
 gspread>=6.1
 google-auth>=2.35
 requests>=2.31
+# Trust store for every HTTPS call the app makes (gspread, requests).
+# Pinned to the first release with the compromised eMudhra intermediate CAs
+# removed — see 2026-10 eMudhra intermediate CA compromise. Older bundles
+# accept forged certificates for any host, so this must not regress.
+certifi>=2026.10.19
 imageio>=2.37
 imageio-ffmpeg>=0.6
 Pillow>=12
