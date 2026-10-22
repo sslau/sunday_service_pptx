@@ -1029,9 +1029,33 @@ def _seed_response_fields(date, week):
         _stanzas_to_text(response.get("verses") or []))
 
 
-@st.cache_data(show_spinner=False, max_entries=64)
+def _hymns_untouched_default(date):
+    """True when this session's 詩歌 list is still the blank 「（未命名）」 seed.
+
+    A session that seeded its hymns while the Google Sheet read was failing
+    keeps three empty hymns and never re-seeds (`ui_hymns` is only built when
+    the key is missing).  When every hymn has no title and no lyrics there is
+    nothing a user could have typed, so adopting the stored week is safe — any
+    real edit, even a single title, makes this False."""
+    hymns = st.session_state.get(f"{date}::ui_hymns")
+    if not hymns:
+        return False
+    for h in hymns:
+        if str(h.get("title") or "").strip():
+            return False
+        stanzas = [s for s in (h.get("stanzas") or []) if str(s).strip()]
+        if stanzas:
+            return False
+    return True
+
+
+@st.cache_data(show_spinner=False, max_entries=64, ttl=300)
 def _cached_week(date):
-    """Current stored/default week for a date (cached; invalidated on save)."""
+    """Current stored/default week for a date.
+
+    Invalidated explicitly on save; `ttl` also bounds how long a value can live
+    so a week cached while the sheet read was failing repairs itself instead of
+    pinning the blank default until the process restarts."""
     return normalize_week(store.get(date) or default_week(date))
 
 
@@ -1042,6 +1066,12 @@ if f"{DATE}::ui_hymns" not in st.session_state:
     st.session_state[f"{DATE}::ui_ann"] = _seed_ann(week)
     _seed_fields(DATE, week)
     _seed_response_fields(DATE, week)
+elif _hymns_untouched_default(DATE) and (week.get("hymns") or []):
+    # This session seeded 詩歌 while the sheet read was failing, leaving the
+    # blank 「（未命名）」 defaults the user is now staring at. The stored week
+    # has real hymns and nothing has been typed, so adopt them. A session with
+    # any edit is left strictly alone.
+    st.session_state[f"{DATE}::ui_hymns"] = _seed_hymns(week)
     # Pre-seed the per-hymn scalar widget keys so their values survive the
     # wizard stepping away from the hymns step and back (widgets re-render
     # with these as their session values).
