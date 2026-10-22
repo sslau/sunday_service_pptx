@@ -27,9 +27,18 @@ USER_AGENT = "Mozilla/5.0 (compatible; SundayServiceSlides/1.0)"
 
 try:
     import certifi
+except ImportError as e:
+    raise RuntimeError(
+        "certifi is required for verified HTTPS requests (see requirements.txt)."
+    ) from e
+
+try:
     SSL_CTX = ssl.create_default_context(cafile=certifi.where())
-except Exception:
-    SSL_CTX = ssl._create_unverified_context()
+except Exception as e:
+    raise RuntimeError(
+        "Failed to load trusted CA bundle from certifi "
+        f"{getattr(certifi, '__version__', 'unknown')} at {certifi.where()}"
+    ) from e
 
 # Book name (full or abbreviation) -> FHL `chineses` code.  All 66 codes below
 # were verified to return records from the API.
