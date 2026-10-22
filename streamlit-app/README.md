@@ -71,6 +71,8 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
    （權限 Editor）。試算表內會自動建立名為 `weeks` 的分頁
    （欄位：date | json | updatedAt）。
 4. `streamlit.community.cloud` → New app → 連接該 repo，選 `app.py`。
+   在 **Advanced settings** 選擇 **Python 3.12 或 3.13**（Community Cloud 預設
+   未必是最新的穩定版；本 app 已在 3.12 驗證，3.15 亦可執行但尚無必要）。
 5. Settings → Secrets：貼上 `.streamlit/secrets.toml` 的內容。
 6. **登入密碼**：編輯器在進入前有一道密碼鎖，**部署時必須設定**。在 Secrets
    貼上 `app_password = "你的密碼"`；未設定時，非本機（部署）開啟會被鎖住並
@@ -78,6 +80,22 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
    （`secrets.toml` 被 .gitignore 排除，密碼不會進 repo。）
 7. Deploy。App 的帳號／權限由 Community Cloud 控制（app 可設為 private，
    加上 `allowed_users` 或直接鎖給自己）。
+
+### 憑證信任庫（certifi）
+
+`requirements.txt` 固定了 `certifi>=2026.10.19`。這是 app 所有 HTTPS 連線
+（gspread、requests）的憑證信任庫；2026-10 的 eMudhra 中繼 CA 洩漏事件中，
+較舊的版本仍會接受被盜金鑰簽發的憑證，等於任何網站都可被冒充。**請勿放寬這個
+下限**，否則重新部署會拉回舊版並重新開啟漏洞。
+
+本機若仍看到憑證錯誤，升級自己的 venv 即可：
+
+```
+.venv/bin/python -m pip install -U "certifi>=2026.10.19"
+```
+
+注意：macOS 內建的 `curl`／`git` 使用系統 `/etc/ssl/cert.pem`，**不受**上述影響，
+必須靠 macOS 更新（系統設定 → 一般 → 軟體更新）修補。
 
 ## 使用流程
 
