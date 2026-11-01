@@ -62,9 +62,11 @@ From top to bottom:
 1. Pick the **service date** on the left (or "＋ 新增週次" to add one).
 2. On the "✏️ 編輯內容" tab, fill the sections using the **nine step buttons**
    at the top (any order works).
-3. Where a section needs a ready-made sermon/announcements file, **upload the
-   `.pptx`** in that step (or fetch it from SharePoint).
-4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status).
+3. If SharePoint is configured, matching section `.pptx` files in the date
+   folder are downloaded and saved locally automatically. You can also upload a
+   file or choose one manually from SharePoint in its section.
+4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status);
+   auto-loaded files are marked as saved locally from SharePoint.
 5. In the sidebar click "💾 儲存目前內容", then "📽 製成整場投影片".
 6. Click "⬇️ 下載 PPTX" to get `SundayWorship_<date>.pptx`. Slides are
    grouped into PowerPoint sections with Chinese names; empty sections are omitted.
@@ -405,11 +407,24 @@ client_secret / site_host / site_path / folder_path), each section's
 "🌐 從 SharePoint 讀取…投影片" panel lists that date's folder and downloads after
 you click "⚡ 從 SharePoint 讀取並儲存".
 
+- When a date is opened, section `.pptx` files whose filename contains the
+  Chinese or English section name followed later by the service date (with
+  optional words between) are downloaded and saved locally; existing local files
+  are not overwritten.
+- Sermon also accepts `sermon_*.pptx` in the selected date folder; if its name
+  includes a date, it must match the selected Sunday.
+- Announcements use `MMDD(報告).pptx` and `MMDD(報告).mp4` (for example,
+  `1101(報告).pptx` / `1101(報告).mp4`). Downloads keep these actual filenames
+  locally; a matching MP4 is downloaded automatically and shown in status.
+- The "製作成投影片" section status identifies auto-loaded SharePoint files
+  and their local copies. Use "☁️ 重新檢查 SharePoint 投影片" to retry.
 - Expected names are the section's canonical filenames (e.g.
   `宣召經文_<date>.pptx`, `講道信息_<date>.pptx`, `家事分享_<date>.pptx`,
   `announcements_<date>.mp4`); folder
   and filenames may spell the date as `YYYY.MM.DD` / `YYYY-MM-DD` / `YYYYMMDD` /
   `YYYY.MMDD`.
+- For future Sundays, including the upcoming Sunday, the `YYYY.MM.DD` date
+  folder is preferred.
 - The announcements MP4 is searched across the whole folder tree (including
   subfolders).
 

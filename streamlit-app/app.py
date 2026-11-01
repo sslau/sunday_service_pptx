@@ -38,9 +38,15 @@ from deck_builder import (build_deck,  # noqa: E402
                           clear_upload_name, clear_video, load_upload_names,
                           prepend_video_slide, resolve_deck_path,
                           save_section_deck, save_upload_name,
+                          save_upload_source, clear_upload_source,
+                          load_upload_sources,
                           save_video_meta, save_video_mp4,
                           saved_section_path, saved_video_meta,
-                          saved_video_mp4, section_filename, section_path)
+                          saved_video_mp4, saved_video_source,
+                          clear_video_source,
+                          save_video_source, section_filename, section_path,
+                          SECTION_FILENAMES, matching_section_deck,
+                          announcement_cloud_filename)
 from video_deck import (announcements_from_pptx,  # noqa: E402
                         build_announcements_mp4, build_images_mp4,
                         build_pptx_slides_mp4)
@@ -336,8 +342,14 @@ def _deck_present(section, upload_key=None):
     if not path:
         return None, False
     orig = (load_upload_names(DATE) or {}).get(section)
+    source = (load_upload_sources(DATE) or {}).get(section)
     shown = orig or os.path.basename(path)
-    where = "已從雲端讀取" if orig else "已儲存"
+    if source == "sharepoint_auto":
+        where = "已由 SharePoint 自動載入並儲存本機"
+    elif source == "sharepoint":
+        where = "已從 SharePoint 讀取並儲存本機"
+    else:
+        where = "已從雲端讀取" if orig else "已儲存"
     return f"{where}：**{shown}**（製成整場時以該檔案為準）", True
 
 
@@ -429,7 +441,11 @@ def _od_fetch_section(section, date, cfg, picked_file=None):
                  and any(v in (f.get("name") or "") for v in variants)), None)
     if picked is None:
         return None
-    path = section_path(section, date)
+    target_name = (picked.get("name") if section == "announcements" else None)
+    path = (os.path.join(os.path.dirname(section_path(section, date)),
+                         os.path.basename(target_name))
+            if target_name and os.path.basename(target_name) == target_name
+            else section_path(section, date))
     ok, err = onedrive.download_to(cfg, picked["id"], path)
     if not ok:
         raise RuntimeError(err)
@@ -437,25 +453,125 @@ def _od_fetch_section(section, date, cfg, picked_file=None):
     st.session_state[f"{date}::build_{'ann' if section == 'announcements' else section}_name"] = \
         fname
     save_upload_name(section, date, fname)
+    save_upload_source(
+        section, date,
+        "sharepoint_auto" if picked_file and picked_file.get("auto") else
+        "sharepoint")
     st.cache_data.clear()
     return fname
 
 
-def _od_fetch_video(cfg, picked_file=None):
+def _auto_load_sharepoint_sections(date, cfg):
+    """Cache matching date-specific section decks from SharePoint once per
+    date/session, without replacing an already saved or uploaded deck."""
+    state_key = f"{date}::sharepoint_auto_load_v5"
+    if state_key in st.session_state:
+        return st.session_state[state_key]
+
+    results = {}
+    if not cfg:
+        results["_state"] = "unconfigured"
+        st.session_state[state_key] = results
+        return results
+
+    try:
+        files = onedrive.files_in_date_folder(
+            cfg, cfg.get("folder_path", ""), date,
+            archive=onedrive.is_past(date))
+    except Exception as exc:
+        results["_error"] = str(exc)
+        st.session_state[state_key] = results
+        return results
+
+    for section in SECTION_FILENAMES:
+        if saved_section_path(section, date):
+            results[section] = {"state": "already_saved"}
+            continue
+        picked = matching_section_deck(
+            files, section, date, onedrive._date_variants(date))
+        if not picked:
+            results[section] = {"state": "missing"}
+            continue
+        picked = dict(picked, auto=True)
+        try:
+            filename = _od_fetch_section(section, date, cfg, picked)
+        except Exception as exc:
+            results[section] = {"state": "error", "message": str(exc)}
+        else:
+            results[section] = {
+                "state": "downloaded",
+                "filename": filename or picked.get("name", ""),
+            }
+
+    video_name = announcement_cloud_filename(date, "mp4")
+    previous_video_source = saved_video_source(date)
+    if (previous_video_source.get("source") == "sharepoint_auto"
+            and previous_video_source.get("name") != video_name):
+        clear_video(date)
+        st.session_state.pop(f"{date}::video_data", None)
+    elif (previous_video_source.get("source") == "sharepoint_auto"
+          and previous_video_source.get("name") == video_name):
+        old_path = saved_video_mp4(date)
+        if old_path and os.path.basename(old_path) != video_name:
+            with open(old_path, "rb") as fh:
+                save_video_mp4(date, fh.read(), filename=video_name)
+            os.remove(old_path)
+
+    if saved_video_mp4(date):
+        results["_video"] = {"state": "already_saved"}
+    else:
+        picked_video = next(
+            (f for f in files
+             if (f.get("name") or "").casefold() == video_name.casefold()),
+            None)
+        if not picked_video:
+            results["_video"] = {"state": "missing"}
+        else:
+            try:
+                filename = _od_fetch_video(
+                    cfg, dict(picked_video, auto=True), date=date)
+            except Exception as exc:
+                results["_video"] = {"state": "error", "message": str(exc)}
+            else:
+                results["_video"] = {
+                    "state": "downloaded",
+                    "filename": filename or video_name,
+                }
+
+    st.session_state[state_key] = results
+    return results
+
+
+def _retry_sharepoint_auto_load(date):
+    st.session_state.pop(f"{date}::sharepoint_auto_load", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v2", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v3", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v4", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v5", None)
+
+
+def _od_fetch_video(cfg, picked_file=None, date=None):
     """Download the date's 家事MP4 into the persisted video store.  When
     `picked_file` ({id,name}) is given it is downloaded directly; otherwise
     fall back to announcements_<date>.mp4, then any .mp4 containing a date
     spelling.  Returns the file name, or None."""
+    date = date or DATE
     picked = picked_file if (
         picked_file and picked_file.get("id") and picked_file.get("name")) else None
     if picked is None:
-        want = f"announcements_{DATE}.mp4"
+        want = announcement_cloud_filename(date, "mp4")
         files = onedrive.files_in_date_folder(
-            cfg, cfg.get("folder_path", ""), DATE,
-            archive=onedrive.is_past(DATE))
-        picked = next((f for f in files if (f.get("name") or "") == want), None)
+            cfg, cfg.get("folder_path", ""), date,
+            archive=onedrive.is_past(date))
+        picked = next((f for f in files
+                       if (f.get("name") or "").casefold() ==
+                       want.casefold()), None)
         if picked is None:
-            variants = onedrive._date_variants(DATE)
+            want = f"announcements_{date}.mp4"
+            picked = next((f for f in files
+                           if (f.get("name") or "") == want), None)
+        if picked is None:
+            variants = onedrive._date_variants(date)
             picked = next(
                 (f for f in files
                  if (f.get("name") or "").lower().endswith(".mp4")
@@ -475,8 +591,13 @@ def _od_fetch_video(cfg, picked_file=None):
             os.remove(tmp)
         except OSError:
             pass
-    save_video_mp4(DATE, data)
-    st.session_state[K("video_data")] = data
+    save_video_mp4(date, data, filename=picked.get("name"))
+    if date == DATE:
+        st.session_state[K("video_data")] = data
+    save_video_source(
+        date, picked.get("name"),
+        "sharepoint_auto" if picked_file and picked_file.get("auto") else
+        "sharepoint")
     st.cache_data.clear()
     return picked.get("name")
 
@@ -495,7 +616,7 @@ def _odrive_panel(section, label, is_video=False):
         _p = (DATE or "").split(".")
         _mmdd = ("%s.%s%s" % (_p[0], _p[1], _p[2])
                  if len(_p) == 3 else DATE)
-        want = (f"announcements_{DATE}.mp4" if is_video
+        want = (announcement_cloud_filename(DATE, "mp4") if is_video
                 else os.path.basename(section_path(section, DATE) or ""))
         ext = ".mp4" if is_video else ".pptx"
         # Past Sundays are moved into the `_Archive` subfolder: search there too.
@@ -552,6 +673,11 @@ def _odrive_panel(section, label, is_video=False):
                 if l == want or l.startswith(want + "（"):
                     default_i = i
                     break
+        if default_i is None and is_video:
+            for i, l in enumerate(labels):
+                if l.split("（", 1)[0].casefold() == want.casefold():
+                    default_i = i
+                    break
         if default_i is None:
             variants = onedrive._date_variants(DATE)
             for i, l in enumerate(labels):
@@ -587,7 +713,7 @@ def _odrive_panel(section, label, is_video=False):
                 return
             try:
                 if is_video:
-                    name = _od_fetch_video(cfg, picked)
+                    name = _od_fetch_video(cfg, picked, date=DATE)
                 else:
                     name = _od_fetch_section(section, DATE, cfg, picked)
             except Exception as exc:
@@ -736,6 +862,7 @@ def persist_uploads(date, uploads):
             st.session_state[f"{date}::build_{wkey}_name"] = \
                 getattr(up, "name", "") or ""
             save_upload_name(sec, date, getattr(up, "name", "") or "")
+            clear_upload_source(sec, date)
             _log_action("上載 " + sec, getattr(up, "name", "") or "")
 
 
@@ -1024,6 +1151,7 @@ for _sec in _SECTION_KEYS:
         st.session_state.pop(f"{DATE}::clear_{_sec}", None)
         clear_section_deck(_sec, DATE)
         clear_upload_name(_sec, DATE)
+        clear_upload_source(_sec, DATE)
         _cleared = True
 if st.session_state.get(f"{DATE}::clear_video"):
     st.session_state.pop(f"{DATE}::clear_video", None)
@@ -2029,6 +2157,7 @@ def render_video_panel(ns="", num="D",
         vid = video_mp4.getvalue()
         st.session_state[K("video_data")] = vid
         save_video_mp4(DATE, vid)
+        clear_video_source(DATE)
         _video_result_tail(
             ns, vid, f"announcements_{DATE}.mp4",
             f"✅ 已採用你上載的 PowerPoint MP4（約 {len(vid) / 1048576:.1f} MB）。")
@@ -2066,6 +2195,7 @@ def render_video_panel(ns="", num="D",
                 bar.progress(1.0, text="MP4 已產製完成")
                 st.session_state[K("video_data")] = data
                 save_video_mp4(DATE, data)
+                clear_video_source(DATE)
         vid = st.session_state.get(K("video_data")) or _saved_mp4_bytes(DATE)
         if vid:
             _video_result_tail(
@@ -3322,6 +3452,9 @@ with tab_build:
         "offering": st.session_state.get(K("build_offering")),
         "response": st.session_state.get(K("build_response")),
     })
+    sharepoint_cfg = _od_config()
+    sharepoint_auto_status = _auto_load_sharepoint_sections(
+        DATE, sharepoint_cfg)
 
     ui_ann = _get_ui("ann")
     ann_images = {}
@@ -3344,6 +3477,56 @@ with tab_build:
             help="勾選：製成整場時，直接合併先前個別產生的各節 pptx 檔"
                  "（含已上載的檔案），不需要重新編譯。"
                  "取消：全部改用網頁上編輯的內容現場編譯。")
+        if sharepoint_cfg:
+            st.button(
+                "☁️ 重新檢查 SharePoint 投影片",
+                key=K("sharepoint_auto_retry"),
+                on_click=_retry_sharepoint_auto_load,
+                args=(DATE,),
+                help="重新檢查此日期的 SharePoint 資料夾，並把尚未儲存的各節投影片下載到本機。")
+        if "_error" in sharepoint_auto_status:
+            st.warning("SharePoint 自動載入失敗："
+                       + sharepoint_auto_status["_error"])
+        elif sharepoint_auto_status.get("_state") == "unconfigured":
+            st.caption("☁️ 尚未設定 SharePoint；不會自動載入投影片。")
+        else:
+            downloaded = sum(
+                item.get("state") == "downloaded"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            locally_saved = downloaded + sum(
+                item.get("state") == "already_saved"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            missing = sum(
+                item.get("state") == "missing"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            st.caption(
+                f"☁️ SharePoint 自動檢查：本機已有 {locally_saved} 節"
+                f"（本次自動下載 {downloaded} 節）"
+                + (f"；{missing} 節找不到此日期的檔案。" if missing else "。"))
+            failures = [
+                (section, item)
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES
+                and isinstance(item, dict) and item.get("state") == "error"]
+            for section, item in failures:
+                st.warning(
+                    f"{SECTION_FILENAMES[section].split('_', 1)[0]}："
+                    f"SharePoint 自動載入失敗 — {item['message']}")
+            video_status = sharepoint_auto_status.get("_video", {})
+            if video_status.get("state") == "downloaded":
+                st.caption(
+                    "🎞 家事MP4：已從 SharePoint 自動載入並儲存本機 "
+                    f"（{video_status['filename']}）。")
+            elif video_status.get("state") == "missing":
+                st.caption(
+                    "🎞 SharePoint 找不到家事MP4："
+                    f"`{announcement_cloud_filename(DATE, 'mp4')}`。")
+            elif video_status.get("state") == "error":
+                st.warning("🎞 家事MP4：SharePoint 自動載入失敗 — "
+                           + video_status["message"])
         def _row(label, sec, upload_key=None, fallback=None):
             """One 步驟狀態 line.  A section with a deck on disk is named by that
             deck — by the filename it was fetched/uploaded under, not the local
@@ -3399,9 +3582,22 @@ with tab_build:
             first_deck = st.session_state.get(K("video_first_deck_s9"))
             if first_deck is None:
                 first_deck = saved_video_meta(DATE)
+            video_source = saved_video_source(DATE)
+            source_note = ""
+            if video_source.get("source") == "sharepoint_auto":
+                source_note = (
+                    "，已由 SharePoint 自動載入並儲存本機"
+                    + (f"：**{video_source['name']}**"
+                       if video_source.get("name") else ""))
+            elif video_source.get("source") == "sharepoint":
+                source_note = (
+                    "，已從 SharePoint 讀取並儲存本機"
+                    + (f"：**{video_source['name']}**"
+                       if video_source.get("name") else ""))
             vid_text = ("✅ **🎞 家事MP4** — 已產生"
                         + ("，將併入第一頁" if bool(first_deck)
-                           else "，未併入第一頁"))
+                           else "，未併入第一頁")
+                        + source_note)
         else:
             vid_text = ("🧩 **🎞 家事MP4** — 未產製"
                         "（請到「編輯內容 → 家事MP4」填入內容並產製）")

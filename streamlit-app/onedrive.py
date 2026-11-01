@@ -169,13 +169,24 @@ def folders(cfg, folder_path, missing_ok=False):
 
 
 def _date_subfolder(cfg, folder_path, date, missing_ok=False):
-    """Best guess of the per-date subfolder: exact name match first, then any
-    folder whose name contains one of the date spellings."""
+    """Find the per-date folder, preferring the canonical YYYY.MM.DD name."""
+    available = folders(cfg, folder_path, missing_ok=missing_ok)
+    preferred = str(date).strip()
+    exact = next((f for f in available
+                  if (f.get("name") or "").strip() == preferred), None)
+    if exact:
+        return exact
+
     variants = _date_variants(date)
-    for f in folders(cfg, folder_path, missing_ok=missing_ok):
+    for variant in sorted(variants, key=lambda value: (
+            value != preferred, len(value), value)):
+        for f in available:
+            name = (f.get("name") or "").strip()
+            if name == variant:
+                return f
+    for f in available:
         name = (f.get("name") or "").strip()
-        if (name in variants or
-                any(v in name for v in variants if len(v) >= 8)):
+        if any(v in name for v in variants if len(v) >= 8):
             return f
     return None
 

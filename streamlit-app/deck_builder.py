@@ -9,6 +9,7 @@ and handed to the generator as absolute paths.
                               announcements_pptx=..., image_overrides=...)
 """
 import copy
+import datetime
 import io
 import json
 import os
@@ -47,6 +48,16 @@ LEGACY_SECTION_FILENAMES = {
     "psalm": "psalm_{date}.pptx",
     "scripture": "scripture_{date}.pptx",
     "communion": "communion_{date}.pptx",
+}
+ENGLISH_SECTION_NAMES = {
+    "songs": ("songs", "song", "hymns", "hymn"),
+    "sermon": ("sermon",),
+    "announcements": ("announcements", "announcement"),
+    "offering": ("offering",),
+    "response": ("response",),
+    "psalm": ("psalm",),
+    "scripture": ("scripture",),
+    "communion": ("communion",),
 }
 # section -> (import flag, file key) read by generate_deck.build
 SECTION_CFG = {
@@ -87,7 +98,86 @@ def saved_section_path(section, date):
         path = os.path.join(SAVE_DIR, str(date), legacy.format(date=date))
         if os.path.isfile(path):
             return path
+    if section == "announcements" and date:
+        original = (load_upload_names(date) or {}).get(section)
+        if original and os.path.basename(original) == original:
+            path = os.path.join(SAVE_DIR, str(date), original)
+            if os.path.isfile(path):
+                return path
     return None
+
+
+def matching_section_deck(files, section, date, date_variants):
+    """Pick a SharePoint deck containing its section name followed by the date."""
+    if section == "announcements":
+        wanted = announcement_cloud_filename(date, "pptx").casefold()
+        for file in files:
+            if (file.get("name") or "").casefold() == wanted:
+                return file
+
+    templates = (SECTION_FILENAMES.get(section),
+                 LEGACY_SECTION_FILENAMES.get(section))
+    variants = [str(date)] + sorted(
+        str(value) for value in date_variants if str(value) != str(date))
+    matches = []
+    for template_index, template in enumerate(templates):
+        if not template:
+            continue
+        section_names = {
+            template.split("{date}", 1)[0].rstrip("_- ").casefold(),
+            *(name.casefold()
+              for name in ENGLISH_SECTION_NAMES.get(section, ())),
+        }
+        canonical = template.format(date=date).casefold()
+        for file in files:
+            name = (file.get("name") or "").casefold()
+            if not name.endswith(".pptx"):
+                continue
+            if section == "sermon" and name.startswith("sermon_"):
+                filename_dates = re.findall(
+                    r"\d{4}[.-]\d{1,2}[.-]\d{1,2}|\d{8}|\d{4}\.\d{4}",
+                    name)
+                if filename_dates and not any(
+                        variant.casefold() in name
+                        for variant in variants):
+                    continue
+                matches.append((name != canonical, template_index, 0, 0,
+                                name, file))
+                continue
+            for section_name in section_names:
+                section_at = name.find(section_name)
+                if section_at < 0:
+                    continue
+                date_at = None
+                matched_variant = len(variants)
+                for variant_index, variant in enumerate(variants):
+                    found_at = name.find(variant.casefold(),
+                                         section_at + len(section_name))
+                    if found_at >= 0 and variant_index < matched_variant:
+                        date_at = found_at
+                        matched_variant = variant_index
+                if date_at is None:
+                    continue
+                matches.append((
+                    name != canonical,
+                    template_index,
+                    matched_variant,
+                    date_at - section_at,
+                    name,
+                    file,
+                ))
+    if not matches:
+        return None
+    return min(matches, key=lambda match: match[:5])[5]
+
+
+def announcement_cloud_filename(date, extension):
+    """SharePoint naming convention for dated announcements decks and videos."""
+    try:
+        parsed = datetime.datetime.strptime(str(date), "%Y.%m.%d")
+    except ValueError:
+        return ""
+    return f"{parsed:%m%d}(報告).{extension.lstrip('.')}"
 
 
 def save_section_deck(section, date, data):
@@ -110,6 +200,10 @@ def clear_section_deck(section, date):
     if legacy and date:
         paths.append(os.path.join(SAVE_DIR, str(date),
                                   legacy.format(date=date)))
+    if section == "announcements" and date:
+        original = (load_upload_names(date) or {}).get(section)
+        if original and os.path.basename(original) == original:
+            paths.append(os.path.join(SAVE_DIR, str(date), original))
     removed = False
     for path in paths:
         if path and os.path.isfile(path):
@@ -160,6 +254,51 @@ def load_upload_names(date):
         return {}
 
 
+def upload_sources_path(date):
+    if not date:
+        return None
+    return os.path.join(SAVE_DIR, str(date), "upload_sources.json")
+
+
+def save_upload_source(section, date, source):
+    """Durably record where a saved section deck came from."""
+    path = upload_sources_path(date)
+    if not path or not source:
+        return
+    sources = load_upload_sources(date)
+    sources[section] = str(source)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(sources, fh, ensure_ascii=False, indent=1)
+
+
+def load_upload_sources(date):
+    """Mapping section -> source label for a date, or {}."""
+    path = upload_sources_path(date)
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            sources = json.load(fh)
+        return sources if isinstance(sources, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def clear_upload_source(section, date):
+    """Drop the recorded source label for a section."""
+    sources = load_upload_sources(date)
+    if section not in sources:
+        return
+    del sources[section]
+    path = upload_sources_path(date)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(sources, fh, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+
+
 def clear_upload_name(section, date):
     """Drop a section's recorded original filename (keeps the deck itself)."""
     names = load_upload_names(date)
@@ -183,14 +322,22 @@ def video_mp4_path(date):
 
 def saved_video_mp4(date):
     """Path of a previously generated 家事MP4, or None."""
+    source = saved_video_source(date)
+    original = source.get("name")
+    if original and os.path.basename(original) == original:
+        path = os.path.join(SAVE_DIR, str(date), original)
+        if os.path.isfile(path):
+            return path
     path = video_mp4_path(date)
     return path if path and os.path.isfile(path) else None
 
 
-def save_video_mp4(date, data):
+def save_video_mp4(date, data, filename=None):
     """Persist a generated 家事MP4 so a later reload/build can reuse it
     (session_state alone is wiped on restart).  Returns the saved path."""
-    path = video_mp4_path(date)
+    path = (os.path.join(SAVE_DIR, str(date), filename)
+            if filename and os.path.basename(filename) == filename
+            else video_mp4_path(date))
     if not path:
         return None
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -214,6 +361,12 @@ def clear_video(date):
     if meta and os.path.isfile(meta):
         try:
             os.remove(meta)
+        except OSError:
+            pass
+    source = _video_source_path(date)
+    if source and os.path.isfile(source):
+        try:
+            os.remove(source)
         except OSError:
             pass
     return removed
@@ -246,6 +399,46 @@ def saved_video_meta(date):
             return bool(json.load(fh).get("first_page"))
     except (OSError, ValueError, TypeError):
         return None
+
+
+def _video_source_path(date):
+    if not date:
+        return None
+    return os.path.join(SAVE_DIR, str(date), "video_source.json")
+
+
+def save_video_source(date, name, source):
+    """Persist the original filename and source of a downloaded MP4."""
+    path = _video_source_path(date)
+    if not path:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"name": str(name or ""), "source": str(source or "")},
+                  fh, ensure_ascii=False, indent=1)
+
+
+def saved_video_source(date):
+    """Previously recorded MP4 source information, or an empty mapping."""
+    path = _video_source_path(date)
+    if not path or not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def clear_video_source(date):
+    path = _video_source_path(date)
+    if path and os.path.isfile(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 
 # Header/image slots the generator resolves from the config (keys are the
 # exact names generate_deck.build reads).  Exposed as optional build-time

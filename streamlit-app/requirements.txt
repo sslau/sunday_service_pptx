@@ -3,6 +3,9 @@ python-pptx==1.0.2
 gspread>=6.1
 google-auth>=2.35
 requests>=2.31
+# Trust store for HTTPS calls; 2026.10.19 is the first release removing the
+# compromised eMudhra intermediate CAs.
+certifi>=2026.10.19
 imageio>=2.37
 imageio-ffmpeg>=0.6
 Pillow>=12
