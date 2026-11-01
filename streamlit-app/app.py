@@ -38,7 +38,7 @@ from deck_builder import (build_deck,  # noqa: E402
                           save_section_deck, save_upload_name,
                           save_video_meta, save_video_mp4,
                           saved_section_path, saved_video_meta,
-                          saved_video_mp4, section_path)
+                          saved_video_mp4, section_filename, section_path)
 from video_deck import (announcements_from_pptx,  # noqa: E402
                         build_announcements_mp4, build_images_mp4,
                         build_pptx_slides_mp4)
@@ -776,6 +776,9 @@ def _seed_hymns(week):
             "music": h.get("music", ""),
             "lyricist": h.get("lyricist", ""),
             "bg": h.get("bg", ""),
+            "font_size": h.get("font_size", week.get("hymn_font_max", 52)),
+            "text_color": h.get("text_color",
+                                week.get("hymn_text_color", "white")),
             "refrain": "\n".join(h.get("refrain") or []),
             "repeat": bool(h.get("refrain_after_every_verse", True)),
             "stanzas": ["\n".join(s) for s in h.get("verses", [])] or [""],
@@ -914,6 +917,8 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "music", draft, sw.get("music", ""))
         _lapse(base + "lyricist", draft, sw.get("lyricist", ""))
         _lapse(base + "bg", draft, sw.get("bg", ""))
+        _lapse(base + "font_size", draft, h.get("font_size", 52))
+        _lapse(base + "text_color", draft, h.get("text_color", "white"))
         _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
         _lapse(base + "repeat", draft,
                bool(sw.get("refrain_after_every_verse", True)))
@@ -991,6 +996,8 @@ if f"{DATE}::ui_hymns" not in st.session_state:
         st.session_state[base + "music"] = h.get("music", "")
         st.session_state[base + "lyricist"] = h.get("lyricist", "")
         st.session_state[base + "bg"] = h.get("bg", "")
+        st.session_state[base + "font_size"] = h.get("font_size", 52)
+        st.session_state[base + "text_color"] = h.get("text_color", "white")
         st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
         st.session_state[base + "paste"] = _stanzas_to_text(
@@ -1164,6 +1171,10 @@ def assemble_hymn(date, ui):
         "lyricist": st.session_state.get(base + "lyricist",
                                         ui.get("lyricist", "")),
         "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
+        "font_size": int(st.session_state.get(
+            base + "font_size", ui.get("font_size", 52)) or 52),
+        "text_color": str(st.session_state.get(
+            base + "text_color", ui.get("text_color", "white")) or "white"),
         "refrain": None,
         "refrain_after_every_verse": False,
         "verses": [split_lines(b) for b in _slide_blocks(paste)],
@@ -1788,11 +1799,12 @@ def _song_font_options(cur):
     return opts
 
 
-def _song_font_selector(label, hint=None):
+def _song_font_selector(label, hint=None, state_key="hymn_font_max",
+                        current=None):
     """歌詞字級下拉（見 _song_font_options 的選項），label 與下拉同一行並緊貼。
     若舊週次存有範圍外的數值，自動補進選項，避免 selectbox 因值不在清單而報錯。
     """
-    cur = int(sv("hymn_font_max", 52) or 52)
+    cur = int(sv(state_key, current if current is not None else 52) or 52)
     options = _song_font_options(cur)
     c1, c2, _ = st.columns([1.3, 0.9, 5], vertical_alignment="center")
     c1.markdown(f"**{label}**")
@@ -1801,17 +1813,19 @@ def _song_font_selector(label, hint=None):
         options=options,
         index=options.index(cur),
         format_func=lambda v: f"{v} pt",
-        key=K("hymn_font_max"),
+        key=K(state_key),
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
 
 
-def _song_color_selector(hint=None):
+def _song_color_selector(hint=None, state_key="hymn_text_color",
+                         current=None):
     """歌詞文字顏色：白字＋黑陰影（適合深色背景）或黑字＋白陰影（適合淺色背景）。
-    排版與字級選擇器一致；舊週次若無此設定則預設白字。詩歌敬拜／詩歌回應共用。"""
+    排版與字級選擇器一致；舊週次若無此設定則預設白字。"""
     opts = ["white", "black"]
-    cur = str(sv("hymn_text_color", "white") or "white")
+    cur = str(sv(state_key, current if current is not None else "white")
+              or "white")
     if cur not in opts:
         cur = "white"
     c1, c2, _ = st.columns([1.3, 1.7, 4.0], vertical_alignment="center")
@@ -1822,7 +1836,7 @@ def _song_color_selector(hint=None):
         index=opts.index(cur),
         format_func=lambda v: ("白字＋黑陰影（適合深色背景）" if v == "white"
                                else "黑字＋白陰影（適合淺色背景）"),
-        key=K("hymn_text_color"),
+        key=K(state_key),
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
@@ -2821,7 +2835,7 @@ def _render_scr_flow():
         st.download_button(
             "⬇️ 下載經文投影片 pptx",
             data=data,
-            file_name=f"scripture_{DATE}.pptx",
+            file_name=section_filename("scripture", DATE),
             mime="application/vnd.openxmlformats-officedocument"
                  ".presentationml.presentation",
         )
@@ -2933,7 +2947,7 @@ with tab_edit:
                            demo="psalm")
             _odrive_panel("psalm", "宣召經文")
             if not _cloud_deck_status("psalm", "宣召經文"):
-                st.caption("尚未讀取 `psalm_<日期>.pptx`；下方仍可直接貼上經文"
+                st.caption("尚未讀取 `宣召經文_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
             _scripture_editor("psalm", "psalm")
 
@@ -2942,21 +2956,13 @@ with tab_edit:
             section_header("2", "詩歌敬拜（Hymns）", demo="hymns")
             _odrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
-                               f"songs_slides_{DATE}.pptx")
+                               section_filename("songs", DATE))
             if not _cloud_deck_status("songs", "詩歌", "build_songs"):
                 st.caption("以下內容以網頁內容現場編譯；上載 .pptx 時"
                            "以檔案為準，字型／項目符號沿用來源檔。")
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
-            _song_color_selector()
-            _song_font_selector(
-                "歌詞字級（pt）",
-                hint="固定字級（預設 52pt、可選 48–52pt），不隨行長縮小；"
-                     "行太長時自動換行。"
-                     "標點符號以空格取代（如「，」「。」→ 空白）。"
-                     "每首詩歌可用下方「背景圖」各自指定背景。")
-
             hymns_ui = _get_ui("hymns")
             hymn_uids = [h["_id"] for h in hymns_ui]
 
@@ -3008,6 +3014,14 @@ with tab_edit:
                         f"{_song_title(uid, h) or '（未命名）'} · {badge}")
                     _lyric_search_panel("hymn", uid)
                     _lyric_editor("hymn", uid)
+                    _song_color_selector(
+                        state_key=f"hymn_{uid}_text_color",
+                        current=h.get("text_color", "white"))
+                    _song_font_selector(
+                        "歌詞字級（pt）",
+                        hint="固定字級，不隨行長縮小；行太長時自動換行。",
+                        state_key=f"hymn_{uid}_font_size",
+                        current=h.get("font_size", 52))
                     c1, c2 = st.columns(2)
                     c1.text_input("曲名",
                                   value=sv(f"hymn_{uid}_title", h.get("title")),
@@ -3065,6 +3079,9 @@ with tab_edit:
                 _add_item("hymns", {"_id": uuid.uuid4().hex[:8], "title": "",
                                     "subtitle": "", "source": "", "music": "",
                                     "lyricist": "", "bg": "",
+                                    "font_size": int(sv("hymn_font_max", 52)),
+                                    "text_color": str(
+                                        sv("hymn_text_color", "white")),
                                     "refrain": "", "repeat": True,
                                     "stanzas": [""]})
                 st.rerun()
@@ -3093,7 +3110,7 @@ with tab_edit:
                 st.download_button(
                     f"⬇️ 下載全部詩歌 .pptx（共 {_an} 頁）",
                     data=_all_bytes,
-                    file_name=f"songs_slides_{DATE}.pptx",
+                    file_name=section_filename("songs", DATE),
                     mime="application/vnd.openxmlformats-officedocument"
                          ".presentationml.presentation",
                     key=K("dl_all_songs_pptx"),
@@ -3115,7 +3132,7 @@ with tab_edit:
                            demo="scripture")
             _odrive_panel("scripture", "讀經經文")
             if not _cloud_deck_status("scripture", "讀經經文"):
-                st.caption("尚未讀取 `scripture_<日期>.pptx`；下方仍可直接貼上經文"
+                st.caption("尚未讀取 `讀經經文_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
             _scripture_editor("scripture", "scripture")
 
@@ -3124,7 +3141,7 @@ with tab_edit:
             section_header("5", "講道信息（Sermon）", demo="sermon")
             _odrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
-                               f"sermon_{DATE}.pptx",
+                               section_filename("sermon", DATE),
                                btn="🗣 產生講道投影片")
             if not _cloud_deck_status("sermon", "講道", "build_sermon"):
                 st.info("此節以現成 .pptx 為準；上載後製成整場時以該檔案為準。"
@@ -3136,17 +3153,17 @@ with tab_edit:
                            "單首回應詩歌，緊接信息之後（可選）", demo="response")
             _odrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
-                               f"response_{DATE}.pptx")
+                               section_filename("response", DATE))
             if not _cloud_deck_status("response", "詩歌回應", "build_response"):
                 st.caption("此節**可選**：不需要可直接按「下一步」略過。"
                            "要加入時，可填寫以下內容現場編譯；"
                            "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             _song_color_selector(
-                hint="與「詩歌敬拜」共用同一設定"
+                hint="此設定只套用於詩歌回應"
                      "（白字＋黑陰影／黑字＋白陰影）。")
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="與「詩歌敬拜」共用同一設定（預設 52pt、可選 48–54pt）。")
+                hint="此設定只套用於詩歌回應（預設 52pt、可選 48–52pt）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
@@ -3187,7 +3204,7 @@ with tab_edit:
                 st.download_button(
                     f"⬇️ 下載詩歌回應 .pptx（共 {_rn} 頁）",
                     data=_rbytes,
-                    file_name=f"response_{DATE}.pptx",
+                    file_name=section_filename("response", DATE),
                     mime="application/vnd.openxmlformats-officedocument"
                          ".presentationml.presentation",
                     key=K("dl_response_pptx"),
@@ -3218,7 +3235,7 @@ with tab_edit:
             _odrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
-                               f"announcements_{DATE}.pptx",
+                               section_filename("announcements", DATE),
                                btn="📋 產生家事分享投影片",
                                widget="ann")
             if not _cloud_deck_status("announcements", "家事分享", "build_ann"):

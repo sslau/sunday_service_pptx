@@ -126,7 +126,7 @@ to all slide text.
 - **內容 (Content):** paste the whole passage in one box; the app **splits it
   across slides automatically** (section 7).
 - Top-right "🌐 從 SharePoint 讀取宣召經文投影片": with SharePoint configured, fetch
-  `psalm_<date>.pptx` to replace the compiled output.
+  `宣召經文_<date>.pptx` to replace the compiled output.
 
 ### Step 2 · Hymns (詩歌敬拜)
 
@@ -161,14 +161,15 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   thumbnail** to apply it (one per hymn; the first cell "依序" = the default
   `media/song_bg1…` order). You can also upload a new background, or drop an
   image into `media/` (named `song_bg*.jpg` and it appears in the strip).
-- **歌詞字級 (pt) (Lyric font size):** fixed size (**default 52pt**, 48–52pt
-  selectable; it does not shrink to fit; long lines wrap).
+- **歌詞字級 (pt) (Lyric font size):** set separately in each hymn's editor;
+  fixed size (default 52pt, 48–52pt selectable; it does not shrink to fit;
+  long lines wrap).
 - **歌詞文字加上陰影 (Text shadow):** keeps lyrics readable over background
   images and is written into the deck (the shadow is now a bit thicker).
-- **歌詞文字顏色 (Text colour):** choose **white text + black shadow (for dark
-  backgrounds)** or **black text + white shadow (for light backgrounds)**; the
-  shadow automatically pairs with the opposite colour. This also applies to the
-  Response Hymn (both sections share the font size and text colour).
+- **歌詞文字顏色 (Text colour):** set separately in each hymn's editor; choose
+  **white text + black shadow (for dark backgrounds)** or **black text + white
+  shadow (for light backgrounds)**. The Response Hymn keeps its own font size
+  and text colour settings.
 - **▶ 預覽這首詩歌的 slides (Preview):** "🎬 產生這首詩歌的 slide" renders an
   inline preview of each page (text and sizes, title card included) and offers
   that hymn's own `.pptx` for download.
@@ -208,7 +209,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   → choose the week's file in the list (e.g. `sermons_20260920.pptx`) → then press
   ⚡ 從 SharePoint 讀取並儲存.
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `sermon_<date>.pptx` from SharePoint.
+  `講道信息_<date>.pptx` from SharePoint.
 - "🗣 產生講道投影片" compiles a standalone file from the page's sermon content
   (when the week already has any).
 
@@ -234,7 +235,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Ticking "聖餐" adds a **Communion + Apostles' Creed** pair after the sermon /
   response.
 - It is **pre-ticked on the month's first Sunday**.
-- If you fetch `communion_<date>.pptx` from SharePoint, it **replaces** the built-in
+- If you fetch `聖餐_<date>.pptx` from SharePoint, it **replaces** the built-in
   Communion + Creed pair (and is used even when the checkbox is off).
 
 ### Step 8 · Announcements (家事分享)
@@ -242,7 +243,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 ![Announcements UI demo](user_guide_assets/section_announcements.gif)
 
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `announcements_<date>.pptx` from SharePoint; "📋 產生家事分享投影片" compiles it
+  `家事分享_<date>.pptx` from SharePoint; "📋 產生家事分享投影片" compiles it
   from the page.
 - In the full deck, announcements sit after the doxology and benediction, second
   to last (the "closing" slide is last).
@@ -370,7 +371,7 @@ relevant background settings).
 
 The sidebar "📜 開啟『經文投影片』獨立流程" opens a **one-step** page: choose the
 global font, enter a reference (fetchable from fhl.net) or paste the whole
-passage, then "📜 製成經文投影片 pptx" to download `scripture_<date>.pptx`.
+passage, then "📜 製成經文投影片 pptx" to download `讀經經文_<date>.pptx`.
 
 - Its content uses separate `scrflow_*` session keys and is **not** saved to
   Google Sheets.
@@ -401,7 +402,8 @@ client_secret / site_host / site_path / folder_path), each section's
 you click "⚡ 從 SharePoint 讀取並儲存".
 
 - Expected names are the section's canonical filenames (e.g.
-  `psalm_<date>.pptx`, `sermon_<date>.pptx`, `announcements_<date>.mp4`); folder
+  `宣召經文_<date>.pptx`, `講道信息_<date>.pptx`, `家事分享_<date>.pptx`,
+  `announcements_<date>.mp4`); folder
   and filenames may spell the date as `YYYY.MM.DD` / `YYYY-MM-DD` / `YYYYMMDD` /
   `YYYY.MMDD`.
 - The announcements MP4 is searched across the whole folder tree (including

@@ -4,12 +4,12 @@
     {
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
-      "hymn_font_max": 52,   # lyrics auto-fit ceiling (default 52pt; UI 48–54)
+      "hymn_font_max": 52,   # legacy/default hymn size and response hymn size
       "hymn_font_min":  48,   # lyrics auto-fit floor — never smaller than 48pt
       "hymn_margin_in": 0.83,
       "call_font":      "DFKai-SB",   # global typeface for all text
-      "hymns": [ {title, subtitle, source, refrain[], refrain_after_every_verse,
-                  verses[ [line...], ... ]} ],
+      "hymns": [ {title, subtitle, source, font_size, text_color, refrain[],
+                  refrain_after_every_verse, verses[ [line...], ... ]} ],
       "scripture":    {ref, ref_size, font_size, max_lines, verses[]},
       "sermon":       {title, title_2, scripture, ref_size, speaker, date, slides[]},
       "response":     {title, subtitle, source, refrain[], refrain_after_every_verse,
@@ -163,6 +163,10 @@ def normalize_week(w):
             "music": str(h.get("music") or ""),
             "lyricist": str(h.get("lyricist") or ""),
             "bg": str(h.get("bg") or ""),
+            "font_size": _num(h.get("font_size"), w["hymn_font_max"]),
+            "text_color": ("black" if str(h.get("text_color")
+                                           or w["hymn_text_color"]).lower()
+                           == "black" else "white"),
             "refrain": (_stanza_lines(h.get("refrain")) or None),
             "refrain_after_every_verse": bool(h.get("refrain_after_every_verse", True)),
             "verses": [_stanza_lines(stanza)

@@ -27,6 +27,16 @@ TEMPLATE = os.path.join(HERE, "blank_16x9.pptx")
 # data/decks/<date>/ so a later full build can reuse them automatically.
 SAVE_DIR = os.path.join(HERE, "data", "decks")
 SECTION_FILENAMES = {
+    "songs": "詩歌敬拜_{date}.pptx",
+    "sermon": "講道信息_{date}.pptx",
+    "announcements": "家事分享_{date}.pptx",
+    "offering": "獻詩_{date}.pptx",
+    "response": "詩歌回應_{date}.pptx",
+    "psalm": "宣召經文_{date}.pptx",
+    "scripture": "讀經經文_{date}.pptx",
+    "communion": "聖餐_{date}.pptx",
+}
+LEGACY_SECTION_FILENAMES = {
     "songs": "songs_slides_{date}.pptx",
     "sermon": "sermon_{date}.pptx",
     "announcements": "announcements_{date}.pptx",
@@ -49,18 +59,33 @@ SECTION_CFG = {
 }
 
 
-def section_path(section, date):
-    """Canonical save path for a section deck (may not exist yet)."""
+def section_filename(section, date):
+    """Canonical downloadable filename for a section deck."""
     tmpl = SECTION_FILENAMES.get(section)
     if not tmpl or not date:
         return None
-    return os.path.join(SAVE_DIR, str(date), tmpl.format(date=date))
+    return tmpl.format(date=date)
+
+
+def section_path(section, date):
+    """Canonical save path for a section deck (may not exist yet)."""
+    filename = section_filename(section, date)
+    if not filename:
+        return None
+    return os.path.join(SAVE_DIR, str(date), filename)
 
 
 def saved_section_path(section, date):
-    """Path of a previously saved section deck, or None."""
+    """Path of a previously saved section deck, including legacy names."""
     path = section_path(section, date)
-    return path if path and os.path.isfile(path) else None
+    if path and os.path.isfile(path):
+        return path
+    legacy = LEGACY_SECTION_FILENAMES.get(section)
+    if legacy and date:
+        path = os.path.join(SAVE_DIR, str(date), legacy.format(date=date))
+        if os.path.isfile(path):
+            return path
+    return None
 
 
 def save_section_deck(section, date, data):
@@ -78,11 +103,17 @@ def save_section_deck(section, date, data):
 def clear_section_deck(section, date):
     """Delete a previously saved section deck (if any). Used to undo an
     accidental upload/persist. Returns True when a file was removed."""
-    path = saved_section_path(section, date)
-    if path:
-        os.remove(path)
-        return True
-    return False
+    paths = [section_path(section, date)]
+    legacy = LEGACY_SECTION_FILENAMES.get(section)
+    if legacy and date:
+        paths.append(os.path.join(SAVE_DIR, str(date),
+                                  legacy.format(date=date)))
+    removed = False
+    for path in paths:
+        if path and os.path.isfile(path):
+            os.remove(path)
+            removed = True
+    return removed
 
 
 # Original uploaded/source filenames are kept in a small JSON next to the

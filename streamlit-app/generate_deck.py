@@ -1217,7 +1217,8 @@ def build_hymns_section(pres, cfg, hymns):
         tsize = 70
         shadow = cfg.get("hymn_text_shadow", True)
         # 文字顏色／陰影配對：白字＋黑陰影（深色背景）或 黑字＋白陰影（淺色背景）。
-        white_text = str(cfg.get("hymn_text_color", "white")
+        white_text = str(hymn.get("text_color")
+                         or cfg.get("hymn_text_color", "white")
                          or "white").lower() != "black"
         text_color = "FFFFFF" if white_text else "000000"
         shadow_color = "000000" if white_text else "FFFFFF"
@@ -1254,9 +1255,9 @@ def build_hymns_section(pres, cfg, hymns):
             total += len(verses)
         elif refrain:
             total += 1
-        # 歌詞字級：固定使用 hymn_font_max（預設 52pt、選單 48–54pt），
-        # 不隨行長縮小；行太長時由 word_wrap 自動換行。
-        song_size = int(cfg.get("hymn_font_max", 52) or 52)
+        # 歌詞字級逐首設定；不隨行長縮小，行太長時由 word_wrap 自動換行。
+        song_size = int(hymn.get("font_size")
+                        or cfg.get("hymn_font_max", 52) or 52)
         page = 0
 
         def add_verse(lines, bg=bg):
@@ -1466,7 +1467,7 @@ def build(pres, cfg):
     _image_only(pres, call)
 
     # psalm（宣召經文，自動分頁；字型下限 44pt）。psalm_import 開啟時，雲端
-    # （OneDrive／Google Drive）取回的 psalm_<date>.pptx 取代排版輸出。
+    # （OneDrive／Google Drive）取回的 宣召經文_<date>.pptx 取代排版輸出。
     if not import_override(pres, cfg, "psalm_import", "psalm_file",
                            locate_psalm_file, "psalm"):
         if psalm.get("verses"):
@@ -1481,7 +1482,7 @@ def build(pres, cfg):
     add_image("worship_header")
 
     # hymns: normally generated here; with songs_import the complete songs
-    # pptx (songs_slides_<date>.pptx) is imported as-is instead.
+    # pptx (詩歌敬拜_<date>.pptx) is imported as-is instead.
     if cfg.get("songs_import"):
         songs_path = locate_songs_file(cfg)
         if songs_path:
@@ -1500,7 +1501,7 @@ def build(pres, cfg):
                 songs_path = None
         if not songs_path:
             print("warning: songs pptx not found (%s), generating hymns from config"
-                  % cfg.get("songs_file", "songs_slides_*.pptx"))
+                  % cfg.get("songs_file", "詩歌敬拜_*.pptx"))
 
     if not songs_path:
         # hymns（title card + verses + refrain，全部 fresh）
@@ -1527,7 +1528,7 @@ def build(pres, cfg):
                   % cfg.get("offering_file", "offering_*.pptx"))
 
     # 讀經 header + scripture verses（fresh reading slides）。header 照舊輸出，
-    # 經文頁面則可由雲端 scripture_<date>.pptx 取代。
+    # 經文頁面則可由雲端 讀經經文_<date>.pptx 取代。
     add_image("scripture_header")
     if not import_override(pres, cfg, "scripture_import", "scripture_file",
                            locate_scripture_file, "scripture"):
@@ -1610,7 +1611,7 @@ def build(pres, cfg):
     # 歡迎/家事分享（announcements.jpg）
     add_image("announce_header")
 
-    # announcements: imported external deck (announcements_<date>.pptx) or
+    # announcements: imported external deck (家事分享_<date>.pptx) or
     # freshly generated from the announcements list.
     if cfg.get("announcements_import"):
         announcements_path = locate_announcements_file(cfg)
@@ -1756,17 +1757,17 @@ DOWNLOADS = os.path.expanduser("~/Downloads")
 
 
 def _locate_pptx(cfg, file_key, default_name, fallback_prefix,
-                 glob_fallback=True):
+                 glob_fallback=True, legacy_names=()):
     """Locate an external deck pptx.
 
     Preference: absolute path from config -> exact filename in the project
     folder or ~/Downloads -> newest <fallback_prefix>*.pptx in either location.
 
-    `glob_fallback=False` drops that last step.  It matters for sections whose
-    canonical file is always date-specific (psalm_<date>.pptx and friends, saved
-    under data/decks/<date>/): the standalone scripture flow also drops
-    scripture_<date>.pptx into ~/Downloads, so globbing by prefix alone would
-    happily import last week's deck when the exact path is missing.  Better to
+    `glob_fallback=False` drops that last step. It matters for sections whose
+    canonical file is always date-specific (宣召經文_<date>.pptx and friends,
+    saved under data/decks/<date>/): the standalone scripture flow also drops
+    讀經經文_<date>.pptx into ~/Downloads, so globbing by prefix alone would
+    happily import last week's deck when the exact path is missing. Better to
     fall back to rendering from config than to use the wrong date.
     """
     name = cfg.get(file_key) or default_name
@@ -1776,9 +1777,10 @@ def _locate_pptx(cfg, file_key, default_name, fallback_prefix,
         return name
     here = os.path.dirname(os.path.abspath(__file__))
     for d in (here, DOWNLOADS):
-        p = os.path.normpath(os.path.join(d, name))
-        if os.path.isfile(p):
-            return p
+        for candidate in (name, *legacy_names):
+            p = os.path.normpath(os.path.join(d, candidate))
+            if os.path.isfile(p):
+                return p
     if not glob_fallback:
         return None
     cands = []
@@ -1789,8 +1791,11 @@ def _locate_pptx(cfg, file_key, default_name, fallback_prefix,
             names = os.listdir(d)
         except OSError:
             continue
+        prefixes = ((fallback_prefix,) if isinstance(fallback_prefix, str)
+                    else tuple(fallback_prefix))
         for fn in names:
-            if fn.lower().endswith(".pptx") and fn.lower().startswith(fallback_prefix):
+            if (fn.lower().endswith(".pptx")
+                    and fn.lower().startswith(prefixes)):
                 cands.append(os.path.normpath(os.path.join(d, fn)))
     if cands:
         return max(cands, key=os.path.getmtime)
@@ -1800,57 +1805,73 @@ def _locate_pptx(cfg, file_key, default_name, fallback_prefix,
 def locate_songs_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "songs_file",
-                        "songs_slides_%s.pptx" % date if date else "songs_slides.pptx",
-                        "songs")
+                        "詩歌敬拜_%s.pptx" % date if date else "詩歌敬拜.pptx",
+                        ("詩歌敬拜", "songs"),
+                        legacy_names=("songs_slides_%s.pptx" % date
+                                      if date else "songs_slides.pptx",))
 
 
 def locate_sermon_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "sermon_file",
-                        "sermon_%s.pptx" % date if date else "sermon.pptx",
-                        "sermon")
+                        "講道信息_%s.pptx" % date if date else "講道信息.pptx",
+                        ("講道信息", "sermon"),
+                        legacy_names=("sermon_%s.pptx" % date
+                                      if date else "sermon.pptx",))
 
 
 def locate_announcements_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "announcements_file",
-                        "announcements_%s.pptx" % date if date else "announcements.pptx",
-                        "announcements")
+                        "家事分享_%s.pptx" % date if date else "家事分享.pptx",
+                        ("家事分享", "announcements"),
+                        legacy_names=("announcements_%s.pptx" % date
+                                      if date else "announcements.pptx",))
 
 
 def locate_offering_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "offering_file",
-                        "offering_%s.pptx" % date if date else "offering.pptx",
-                        "offering")
+                        "獻詩_%s.pptx" % date if date else "獻詩.pptx",
+                        ("獻詩", "offering"),
+                        legacy_names=("offering_%s.pptx" % date
+                                      if date else "offering.pptx",))
 
 
 def locate_response_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "response_file",
-                        "response_%s.pptx" % date if date else "response.pptx",
-                        "response")
+                        "詩歌回應_%s.pptx" % date if date else "詩歌回應.pptx",
+                        ("詩歌回應", "response"),
+                        legacy_names=("response_%s.pptx" % date
+                                      if date else "response.pptx",))
 
 
 def locate_psalm_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "psalm_file",
-                        "psalm_%s.pptx" % date if date else "psalm.pptx",
-                        "psalm", glob_fallback=False)
+                        "宣召經文_%s.pptx" % date if date else "宣召經文.pptx",
+                        ("宣召經文", "psalm"), glob_fallback=False,
+                        legacy_names=("psalm_%s.pptx" % date
+                                      if date else "psalm.pptx",))
 
 
 def locate_scripture_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "scripture_file",
-                        "scripture_%s.pptx" % date if date else "scripture.pptx",
-                        "scripture", glob_fallback=False)
+                        "讀經經文_%s.pptx" % date if date else "讀經經文.pptx",
+                        ("讀經經文", "scripture"), glob_fallback=False,
+                        legacy_names=("scripture_%s.pptx" % date
+                                      if date else "scripture.pptx",))
 
 
 def locate_communion_file(cfg):
     date = cfg.get("date", "")
     return _locate_pptx(cfg, "communion_file",
-                        "communion_%s.pptx" % date if date else "communion.pptx",
-                        "communion", glob_fallback=False)
+                        "聖餐_%s.pptx" % date if date else "聖餐.pptx",
+                        ("聖餐", "communion"), glob_fallback=False,
+                        legacy_names=("communion_%s.pptx" % date
+                                      if date else "communion.pptx",))
 
 
 # Section title cards the generator already emits itself (worship.jpg,
