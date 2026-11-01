@@ -16,9 +16,11 @@ import re
 import tempfile
 
 from generate_deck import (_blank_layout, build, build_section_deck, plan)  # noqa: E402
+from lxml import etree
 from pptx import Presentation
 
 _PPTX_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, "blank_16x9.pptx")
@@ -459,12 +461,27 @@ def prepend_video_slide(pptx_data, mp4_bytes, poster_bytes):
         last = sldIdLst[-1]
         sldIdLst.remove(last)
         sldIdLst.insert(0, last)
+        _join_first_section(pres, last)
         out = io.BytesIO()
         pres.save(out)
         return out.getvalue()
     finally:
         os.unlink(mp4_path)
         os.unlink(poster_path)
+
+
+def _join_first_section(pres, sldId):
+    """Add a prepended video slide to the first PowerPoint section."""
+    section_list = pres._element.find(f".//{{{_P14_NS}}}sectionLst")
+    first = (section_list.find(f"{{{_P14_NS}}}section")
+             if section_list is not None else None)
+    slide_list = (first.find(f"{{{_P14_NS}}}sldIdLst")
+                  if first is not None else None)
+    if slide_list is None:
+        return
+    slide_ref = etree.Element(f"{{{_P14_NS}}}sldId")
+    slide_ref.set("id", sldId.get("id"))
+    slide_list.insert(0, slide_ref)
 
 
 def _set_media_autoplay_loop(slde, spid):

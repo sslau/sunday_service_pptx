@@ -20,6 +20,7 @@ import uuid
 import html
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="崇拜投影片編輯器", page_icon="✝",
                    layout="wide")
@@ -28,6 +29,7 @@ import bible  # noqa: E402
 import login_log  # noqa: E402
 import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
+import worship_link  # noqa: E402
 from generate_deck import (IMAGE_SLIDES,  # noqa: E402
                            READING_BG, SERMON_GOLD, _DIVIDER_TITLES)
 from deck_builder import (build_deck,  # noqa: E402
@@ -53,7 +55,7 @@ os.chdir(HERE)
 try:
     secrets_obj = st.secrets
     st_secrets = {}
-    for key in ("store", "gcp_service_account"):
+    for key in ("store", "gcp_service_account", "scripture_sheet"):
         try:
             st_secrets[key] = secrets_obj[key]
         except Exception:
@@ -1610,6 +1612,13 @@ div[data-testid="stExpander"] > details[open] > summary
 .steps .step.active { background:var(--accent); color:#fff;
   box-shadow:0 5px 14px rgba(63,91,139,.3); }
 .steps .step.wait { opacity:.75; }
+.st-key-stepnav [data-testid="stHorizontalBlock"] {
+  flex-wrap:wrap; gap:.4rem; }
+.st-key-stepnav [data-testid="stColumn"] {
+  flex:1 1 6rem; min-width:6rem; }
+@media (max-width: 640px) {
+  .stButton > button, .stDownloadButton > button { min-height:2.7rem; }
+}
 /* Section demo GIF inside the 操作示範 dialog: a roomy modal that still
    never spills off a laptop screen. */
 div[role="dialog"] { width: min(1040px, 94vw) !important;
@@ -1708,6 +1717,18 @@ def _fetch_into(ref_key, target_key, section=None):
             st.session_state[err_key] = (
                 f"已載入，但儲存到 Google Sheet 失敗：{exc}；請另按「儲存目前內容」")
             st.session_state[info_key] = ""
+
+
+def _fetch_worship_scripture(date, target_key, status_key):
+    """Load this date's reading from Worship_Link into the scripture editor."""
+    try:
+        text = worship_link.fetch_scripture(st_secrets, date)
+    except Exception as exc:
+        st.session_state[status_key] = ("error", f"Worship_Link 載入失敗：{exc}")
+        return
+    st.session_state[target_key] = text
+    st.session_state[status_key] = (
+        "success", f"已從 Worship_Link 載入 {date} 讀經經文")
 
 
 def _pick_book(select_key, ref_key):
@@ -2076,16 +2097,31 @@ def _step_marker(step):
     st.progress(step / len(EDIT_STEPS),
                 text=f"第 {step} / {len(EDIT_STEPS)} 步驟 · "
                      f"{EDIT_STEPS[step - 1][0]}")
-    cols = st.columns(len(EDIT_STEPS))
-    for i, (_title, short) in enumerate(EDIT_STEPS):
-        idx = i + 1
-        if cols[i].button(f"{idx} {short}", key=K(f"stepj_{idx}"),
-                          type="primary" if idx == step else "secondary",
-                          use_container_width=True):
-            if idx != step:
-                st.session_state[K("edit_step")] = idx
-                st.rerun()
+    with st.container(key="stepnav"):
+        cols = st.columns(len(EDIT_STEPS))
+        for i, (_title, short) in enumerate(EDIT_STEPS):
+            idx = i + 1
+            if cols[i].button(f"{idx} {short}", key=K(f"stepj_{idx}"),
+                              type="primary" if idx == step else "secondary",
+                              use_container_width=True):
+                if idx != step:
+                    st.session_state[K("edit_step")] = idx
+                    st.rerun()
     st.caption("頂端按鈕可按**任意順序**填寫，不需要依序完成。")
+
+
+def _jump_to_section(step):
+    """Scroll to the selected section after its content has rerendered."""
+    previous = st.session_state.get(K("_shown_step"))
+    st.session_state[K("_shown_step")] = step
+    if previous is None or previous == step:
+        return
+    components.html(
+        "<script>try{var t=window.parent.document"
+        ".getElementById('step-top');"
+        "if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}"
+        "catch(e){}</script>",
+        height=0)
 
 
 def _step_nav(step):
@@ -2777,6 +2813,18 @@ def _scripture_editor(prefix, section=None):
                "「列表」= 一節一行，分頁只在節與節之間。")
     verses_key = K(f"{prefix}_verses")
     st.session_state.setdefault(verses_key, sv(f"{prefix}_verses"))
+    if section == "scripture":
+        status_key = K("worship_link_status")
+        st.button(
+            "從主日事奉 Google sheet link自動填入讀經經文",
+            key=K("worship_link_load"),
+            on_click=_fetch_worship_scripture,
+            args=(DATE, verses_key, status_key),
+            use_container_width=True)
+        status = st.session_state.get(status_key)
+        if status:
+            kind, message = status
+            (st.success if kind == "success" else st.error)(message)
     st.text_area("內容（貼上全部經文，自動分頁）",
                  key=verses_key, height=200)
     _fetch_status(f"{prefix}_verses")
@@ -2940,6 +2988,7 @@ with tab_edit:
 
     _step_marker(step)
     st.divider()
+    st.markdown('<div id="step-top"></div>', unsafe_allow_html=True)
 
     if step == 1:
         with st.container(border=True):
@@ -3250,6 +3299,7 @@ with tab_edit:
                    "整場投影片的第一頁（勾選「併入第一頁」時，自動循環播放）。")
 
     st.divider()
+    _jump_to_section(step)
     _step_nav(step)
     if step >= len(EDIT_STEPS):
         st.success("全部步驟已完成 ✔　在左側面板按「📽 製成整場投影片」，"
@@ -3434,7 +3484,7 @@ with gen_slot:
                     st.warning("未產製 MP4，無法併入第一頁"
                                "（請先在「✏️ 編輯內容 → 家事MP4」產生影片）。")
             st.session_state["built_bytes"] = data
-            st.session_state["built_name"] = f"Sunday_Service_{DATE}.pptx"
+            st.session_state["built_name"] = f"SundayWorship_{DATE}.pptx"
             st.session_state["built_count"] = slide_count
             st.session_state["built_date"] = DATE
             if st.session_state.get("video_first_applied"):

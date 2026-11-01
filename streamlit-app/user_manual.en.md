@@ -48,7 +48,7 @@ From top to bottom:
 | 🔄 重新載入 Google Sheet (Reload) | Clear the cache and re-read the sheet now (use after editing the sheet by hand). |
 | 主日日期 (Service date) | Switch the Sunday being edited; the edit page follows the selection. |
 | 💾 儲存目前內容 (Save current content) | Save everything on the page back to the data store (Sheets/local JSON). |
-| 📽 製成整場投影片（合併＋編譯）(Generate full service) | Build the whole `Sunday_Service_<date>.pptx`; on success a "⬇️ 下載 PPTX" (Download) button appears below. |
+| 📽 製成整場投影片（合併＋編譯）(Generate full service) | Build the whole `SundayWorship_<date>.pptx`; on success a "⬇️ 下載 PPTX" (Download) button appears below. |
 | 📜 經文投影片（獨立流程）(Scripture-only, separate flow) | Open a one-step page that makes a scripture-only deck; its content is **not** saved to Sheets and is not part of the full-service flow. |
 
 > **Remember to click "💾 儲存目前內容".** While you type, edits live in the
@@ -66,7 +66,8 @@ From top to bottom:
    `.pptx`** in that step (or fetch it from SharePoint).
 4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status).
 5. In the sidebar click "💾 儲存目前內容", then "📽 製成整場投影片".
-6. Click "⬇️ 下載 PPTX" to get `Sunday_Service_<date>.pptx`.
+6. Click "⬇️ 下載 PPTX" to get `SundayWorship_<date>.pptx`. Slides are
+   grouped into PowerPoint sections with Chinese names; empty sections are omitted.
 
 The animation below shows a real walkthrough: it steps through the nine
 wizard sections in order, then switches to the "📽 製作成投影片" tab
@@ -200,6 +201,9 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Identical controls to the Call to Worship (book dropdown, translation, fhl.net
   fetch, fonts, paragraph/list layout, auto-splitting); the reading is just
   usually longer.
+- Click "從主日事奉 Google sheet link自動填入讀經經文" to load the passage
+  for the selected Sunday from the worship-team sheet. You can edit it afterward;
+  use "儲存目前內容" to save changes.
 
 ### Step 5 · Sermon (講道信息)
 
@@ -344,7 +348,7 @@ sidebar. On success you'll see "完成：N 頁" and a "⬇️ 下載 PPTX" butto
 
 ## 5. Full-deck slide order
 
-(After opening `Sunday_Service_<date>.pptx`; if the video is used it is placed
+(After opening `SundayWorship_<date>.pptx`; if the video is used it is placed
 first of all.)
 
 Fixed slides + sections:

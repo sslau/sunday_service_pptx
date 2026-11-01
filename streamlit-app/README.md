@@ -67,6 +67,9 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
 2. 在 Google Cloud Console 建立 Service Account，下載 JSON 金鑰；
    把金鑰欄位填入 `.streamlit/secrets.toml`（範例見
    `.streamlit/secrets.toml.example`）。
+   若要啟用讀經經文自動匯入，另設定 `[scripture_sheet]`（同工表 URL、
+   `Worship_Link` 工作表名稱、日期欄 `A`、經文欄 `C`），並將試算表分享給
+   service account（Viewer 即可）。
 3. 建立（或沿用）一個 Google 試算表，把它**分享給 service account 的 email**
    （權限 Editor）。試算表內會自動建立名為 `weeks` 的分頁
    （欄位：date | json | updatedAt）。
@@ -107,7 +110,8 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
      以及是否加入聖餐＋使徒信經。**當月第一主日**會預設勾選聖餐＋使徒信經。
   5. 「製成整場投影片」合併固定頁＋四大節（詩歌／獻詩／講道／家事分享，依序：
      宣召 → 詩歌 → 禱告主禱文 → **獻詩** → 讀經 → 講道 → **詩歌回應** →
-     聖餐 → 家事分享）→ 下載 `Sunday_Service_<date>.pptx`。
+     聖餐 → 家事分享）→ 下載 `SundayWorship_<date>.pptx`。檔案會按流程分組為
+     中文 PowerPoint 章節；沒有內容的章節會略過。
   6. 另可替換節目的背景圖片，或在製成時為「圖片型家事分享」附加圖片。
 
 已知取捨：上傳的圖片（例如「圖片型家事分享」）不回存試算表，重啟後需重新

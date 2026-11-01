@@ -19,7 +19,7 @@ a local build server.
 | --- | --- |
 | Service date | Switch between Sundays; the edit page follows the selection. |
 | Save current content | Save everything on the current page back to the data store (Sheets/local). |
-| Generate full service (merge + compile) | Build the complete `Sunday_Service_<date>.pptx`. |
+| Generate full service (merge + compile) | Build the complete `SundayWorship_<date>.pptx`. |
 | Add week | Enter `YYYY.MM.DD` and click "Add and open" to create a new week. |
 
 > After a successful build, the download button appears directly beneath the
@@ -100,7 +100,7 @@ sermon, announcements, and communion.
    - Saved (reuse of a previously generated file)
    - Compiled (from the edit page)
 7. Back in the side panel, click "Generate full service", then
-   "Download PPTX" to get `Sunday_Service_<date>.pptx`.
+   "Download PPTX" to get `SundayWorship_<date>.pptx`.
 
 > The "Generate individual pptx" block produces Hymns / Sermon / Announcements
 > separately if you want to send one section to a teammate first; those files
