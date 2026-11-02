@@ -2415,6 +2415,9 @@ def _sanity_check_scripture(week, deck=None):
 
 
 _PAGE_LABEL_RE = re.compile(r"^(\d+)/(\d+)$")
+_HYMN_TITLE_RE = re.compile(
+    r"(?:聖詩|美樂頌|Hymn(?:al)?)\s*#?\s*\d+",
+    re.IGNORECASE)
 
 # Section headers that may sit atop an imported song deck (獻詩／回應) — treated
 # as headers, not songs, by the slide-count check.  generate_deck only
@@ -2451,6 +2454,11 @@ def _sanity_is_divider(lines):
     return joined in _SANITY_DIVIDERS
 
 
+def _sanity_is_hymn_title(lines):
+    """Imported hymn title cards often include a hymnal name and number."""
+    return any(_HYMN_TITLE_RE.search(line) for line in lines)
+
+
 def _sanity_song_groups(infos):
     """[(slides, title)] splitting a song section deck into songs, where
     `slides` is that song's slide infos (its title card first).
@@ -2475,6 +2483,22 @@ def _sanity_song_groups(infos):
         if cur is not None:
             groups.append(cur)
         return [(sl, t) for sl, t in groups]
+
+    # Imported decks may repeat title/composer placeholders on lyric slides,
+    # which makes font-size heuristics mistake lyrics for title cards. A
+    # printed hymn-book number is a reliable marker for the actual title card.
+    title_cards = [
+        i for i, slide in enumerate(infos)
+        if _sanity_is_hymn_title(slide["lines"])
+        and not _sanity_is_divider(slide["lines"])
+    ]
+    if title_cards:
+        groups = []
+        for k, start in enumerate(title_cards):
+            end = title_cards[k + 1] if k + 1 < len(title_cards) else len(infos)
+            groups.append((infos[start:end],
+                           _sanity_card_title(infos[start]["lines"])))
+        return groups
 
     # No page labels → imported deck: split on font-size title cards.
     sizes = [s.get("maxsize") for s in infos if s.get("maxsize")]
