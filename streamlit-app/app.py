@@ -18,6 +18,7 @@ import re
 import tempfile
 import uuid
 import html
+from datetime import date as _date, timedelta
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -29,7 +30,7 @@ import bible  # noqa: E402
 import login_log  # noqa: E402
 import lyric_search  # noqa: E402
 import onedrive  # noqa: E402
-import scripture_sheet  # noqa: E402
+import worship_link  # noqa: E402
 from generate_deck import (IMAGE_SLIDES,  # noqa: E402
                            READING_BG, SERMON_GOLD, _DIVIDER_TITLES)
 from deck_builder import (build_deck,  # noqa: E402
@@ -38,9 +39,15 @@ from deck_builder import (build_deck,  # noqa: E402
                           clear_upload_name, clear_video, load_upload_names,
                           prepend_video_slide, resolve_deck_path,
                           save_section_deck, save_upload_name,
+                          save_upload_source, clear_upload_source,
+                          load_upload_sources,
                           save_video_meta, save_video_mp4,
                           saved_section_path, saved_video_meta,
-                          saved_video_mp4, section_path)
+                          saved_video_mp4, saved_video_source,
+                          clear_video_source,
+                          save_video_source, section_filename, section_path,
+                          SECTION_FILENAMES, matching_section_deck,
+                          announcement_cloud_filename)
 from video_deck import (announcements_from_pptx,  # noqa: E402
                         build_announcements_mp4, build_images_mp4,
                         build_pptx_slides_mp4)
@@ -65,9 +72,25 @@ except Exception:
 
 store = get_store(st_secrets)
 
+_today = _date.today()
+
+
+def _initial_active_date(dates, today):
+    """Choose today's Sunday over an auto-created future week on fresh visits."""
+    dates = sorted(dates, reverse=True)
+    if today.weekday() == 6:
+        today_key = today.strftime("%Y.%m.%d")
+        if today_key in dates:
+            return today_key
+        previous_dates = [value for value in dates if value <= today_key]
+        if previous_dates:
+            return previous_dates[0]
+    return dates[0] if dates else "2026.09.20"
+
+
 if "active_date" not in st.session_state:
-    dates = sorted(store.all().keys(), reverse=True)
-    st.session_state["active_date"] = dates[0] if dates else "2026.09.20"
+    st.session_state["active_date"] = _initial_active_date(
+        store.all().keys(), _today)
 
 DATE = st.session_state["active_date"]
 P = f"{DATE}::"
@@ -209,6 +232,15 @@ if not _auth_ok():
         st.stop()
 
 
+_auto_added_week = None
+if _today.weekday() == 6:
+    _next_sunday = (_today + timedelta(days=7)).strftime("%Y.%m.%d")
+    if _next_sunday not in store.all():
+        store.save(default_week(_next_sunday))
+        st.cache_data.clear()
+        _auto_added_week = _next_sunday
+
+
 def song_bg_files():
     """media/song_bg*.jpg relative paths, sorted numerically (bg1<bg2<…)."""
     import glob
@@ -246,41 +278,34 @@ def _bg_picker(wkey, default):
             if o != opt:
                 st.session_state[K(f"{wkey}_bgck_{j}")] = False
 
-    # `bgpick_*` is a CSS hook (see _CSS): the thumbnails stay in one row on a
-    # wide desktop but wrap into a grid on a phone instead of stacking
-    # full-width, and on a small laptop they reflow instead of squeezing.
-    with st.container(key=f"bgpick_{wkey}"):
-        thumb_cols = st.columns(len(opts) if opts else 1)
-        for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
-            with col:
-                chosen = opt == current
-                cand = ""
-                if opt:
-                    cand = opt if os.path.isfile(opt) else \
-                        os.path.join(os.getcwd(), opt)
-                name = ("依序 song_bg1…" if not opt
-                        else os.path.splitext(os.path.basename(opt))[0])
-                if os.path.isfile(cand):
-                    st.image(cand, width=84,
-                             caption=("✓ " + name if chosen else name))
-                else:
-                    st.markdown(
-                        '<div style="display:flex;align-items:center;'
-                        'justify-content:center;height:63px;border:'
-                        + ("2px solid var(--accent);" if chosen
-                           else "1px dashed var(--line);")
-                        + 'border-radius:8px;color:'
-                        + ("var(--accent);font-weight:700;" if chosen
-                           else "var(--muted);")
-                        + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
-                        '</div>', unsafe_allow_html=True)
-                # Keyed checkboxes: the auto-generated id of two identical
-                # unkeyed ones collides, so each gets a key; the callback keeps
-                # the row acting like a radio (see `_choose`).
-                st.checkbox("✓ 使用中" if chosen else "選用",
-                            value=chosen,
-                            key=K(f"{wkey}_bgck_{i}"),
-                            on_change=_choose, args=(opt,))
+    thumb_cols = st.columns(len(opts) if opts else 1)
+    for i, (col, opt) in enumerate(zip(thumb_cols, opts)):
+        with col:
+            chosen = opt == current
+            cand = ""
+            if opt:
+                cand = opt if os.path.isfile(opt) else \
+                    os.path.join(os.getcwd(), opt)
+            name = ("依序 song_bg1…" if not opt
+                    else os.path.splitext(os.path.basename(opt))[0])
+            if os.path.isfile(cand):
+                st.image(cand, width=84, caption=("✓ " + name if chosen else name))
+            else:
+                st.markdown(
+                    '<div style="display:flex;align-items:center;'
+                    'justify-content:center;height:63px;border:'
+                    + ("2px solid var(--accent);" if chosen else "1px dashed var(--line);")
+                    + 'border-radius:8px;color:'
+                    + ("var(--accent);font-weight:700;" if chosen else "var(--muted);")
+                    + 'font-size:.75rem;text-align:center">依序<br>song_bg1…'
+                    '</div>', unsafe_allow_html=True)
+            # Keyed checkboxes: the auto-generated id of two identical unkeyed
+            # ones collides, so each gets a key; the callback keeps the row
+            # acting like a radio (see `_choose`).
+            st.checkbox("✓ 使用中" if chosen else "選用",
+                        value=chosen,
+                        key=K(f"{wkey}_bgck_{i}"),
+                        on_change=_choose, args=(opt,))
     st.caption("點縮圖下方的勾選框即套用該背景（第一格「依序」＝照既定順序，"
                "同一個背景只會勾一個）。")
     up = st.file_uploader("上傳新背景（jpg，存到 media/song_bg*.jpg，"
@@ -343,8 +368,14 @@ def _deck_present(section, upload_key=None):
     if not path:
         return None, False
     orig = (load_upload_names(DATE) or {}).get(section)
+    source = (load_upload_sources(DATE) or {}).get(section)
     shown = orig or os.path.basename(path)
-    where = "已從雲端讀取" if orig else "已儲存"
+    if source == "sharepoint_auto":
+        where = "已由 SharePoint 自動載入並儲存本機"
+    elif source == "sharepoint":
+        where = "已從 SharePoint 讀取並儲存本機"
+    else:
+        where = "已從雲端讀取" if orig else "已儲存"
     return f"{where}：**{shown}**（製成整場時以該檔案為準）", True
 
 
@@ -436,7 +467,11 @@ def _od_fetch_section(section, date, cfg, picked_file=None):
                  and any(v in (f.get("name") or "") for v in variants)), None)
     if picked is None:
         return None
-    path = section_path(section, date)
+    target_name = (picked.get("name") if section == "announcements" else None)
+    path = (os.path.join(os.path.dirname(section_path(section, date)),
+                         os.path.basename(target_name))
+            if target_name and os.path.basename(target_name) == target_name
+            else section_path(section, date))
     ok, err = onedrive.download_to(cfg, picked["id"], path)
     if not ok:
         raise RuntimeError(err)
@@ -444,25 +479,125 @@ def _od_fetch_section(section, date, cfg, picked_file=None):
     st.session_state[f"{date}::build_{'ann' if section == 'announcements' else section}_name"] = \
         fname
     save_upload_name(section, date, fname)
+    save_upload_source(
+        section, date,
+        "sharepoint_auto" if picked_file and picked_file.get("auto") else
+        "sharepoint")
     st.cache_data.clear()
     return fname
 
 
-def _od_fetch_video(cfg, picked_file=None):
+def _auto_load_sharepoint_sections(date, cfg):
+    """Cache matching date-specific section decks from SharePoint once per
+    date/session, without replacing an already saved or uploaded deck."""
+    state_key = f"{date}::sharepoint_auto_load_v5"
+    if state_key in st.session_state:
+        return st.session_state[state_key]
+
+    results = {}
+    if not cfg:
+        results["_state"] = "unconfigured"
+        st.session_state[state_key] = results
+        return results
+
+    try:
+        files = onedrive.files_in_date_folder(
+            cfg, cfg.get("folder_path", ""), date,
+            archive=onedrive.is_past(date))
+    except Exception as exc:
+        results["_error"] = str(exc)
+        st.session_state[state_key] = results
+        return results
+
+    for section in SECTION_FILENAMES:
+        if saved_section_path(section, date):
+            results[section] = {"state": "already_saved"}
+            continue
+        picked = matching_section_deck(
+            files, section, date, onedrive._date_variants(date))
+        if not picked:
+            results[section] = {"state": "missing"}
+            continue
+        picked = dict(picked, auto=True)
+        try:
+            filename = _od_fetch_section(section, date, cfg, picked)
+        except Exception as exc:
+            results[section] = {"state": "error", "message": str(exc)}
+        else:
+            results[section] = {
+                "state": "downloaded",
+                "filename": filename or picked.get("name", ""),
+            }
+
+    video_name = announcement_cloud_filename(date, "mp4")
+    previous_video_source = saved_video_source(date)
+    if (previous_video_source.get("source") == "sharepoint_auto"
+            and previous_video_source.get("name") != video_name):
+        clear_video(date)
+        st.session_state.pop(f"{date}::video_data", None)
+    elif (previous_video_source.get("source") == "sharepoint_auto"
+          and previous_video_source.get("name") == video_name):
+        old_path = saved_video_mp4(date)
+        if old_path and os.path.basename(old_path) != video_name:
+            with open(old_path, "rb") as fh:
+                save_video_mp4(date, fh.read(), filename=video_name)
+            os.remove(old_path)
+
+    if saved_video_mp4(date):
+        results["_video"] = {"state": "already_saved"}
+    else:
+        picked_video = next(
+            (f for f in files
+             if (f.get("name") or "").casefold() == video_name.casefold()),
+            None)
+        if not picked_video:
+            results["_video"] = {"state": "missing"}
+        else:
+            try:
+                filename = _od_fetch_video(
+                    cfg, dict(picked_video, auto=True), date=date)
+            except Exception as exc:
+                results["_video"] = {"state": "error", "message": str(exc)}
+            else:
+                results["_video"] = {
+                    "state": "downloaded",
+                    "filename": filename or video_name,
+                }
+
+    st.session_state[state_key] = results
+    return results
+
+
+def _retry_sharepoint_auto_load(date):
+    st.session_state.pop(f"{date}::sharepoint_auto_load", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v2", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v3", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v4", None)
+    st.session_state.pop(f"{date}::sharepoint_auto_load_v5", None)
+
+
+def _od_fetch_video(cfg, picked_file=None, date=None):
     """Download the date's 家事MP4 into the persisted video store.  When
     `picked_file` ({id,name}) is given it is downloaded directly; otherwise
     fall back to announcements_<date>.mp4, then any .mp4 containing a date
     spelling.  Returns the file name, or None."""
+    date = date or DATE
     picked = picked_file if (
         picked_file and picked_file.get("id") and picked_file.get("name")) else None
     if picked is None:
-        want = f"announcements_{DATE}.mp4"
+        want = announcement_cloud_filename(date, "mp4")
         files = onedrive.files_in_date_folder(
-            cfg, cfg.get("folder_path", ""), DATE,
-            archive=onedrive.is_past(DATE))
-        picked = next((f for f in files if (f.get("name") or "") == want), None)
+            cfg, cfg.get("folder_path", ""), date,
+            archive=onedrive.is_past(date))
+        picked = next((f for f in files
+                       if (f.get("name") or "").casefold() ==
+                       want.casefold()), None)
         if picked is None:
-            variants = onedrive._date_variants(DATE)
+            want = f"announcements_{date}.mp4"
+            picked = next((f for f in files
+                           if (f.get("name") or "") == want), None)
+        if picked is None:
+            variants = onedrive._date_variants(date)
             picked = next(
                 (f for f in files
                  if (f.get("name") or "").lower().endswith(".mp4")
@@ -482,8 +617,13 @@ def _od_fetch_video(cfg, picked_file=None):
             os.remove(tmp)
         except OSError:
             pass
-    save_video_mp4(DATE, data)
-    st.session_state[K("video_data")] = data
+    save_video_mp4(date, data, filename=picked.get("name"))
+    if date == DATE:
+        st.session_state[K("video_data")] = data
+    save_video_source(
+        date, picked.get("name"),
+        "sharepoint_auto" if picked_file and picked_file.get("auto") else
+        "sharepoint")
     st.cache_data.clear()
     return picked.get("name")
 
@@ -502,7 +642,7 @@ def _odrive_panel(section, label, is_video=False):
         _p = (DATE or "").split(".")
         _mmdd = ("%s.%s%s" % (_p[0], _p[1], _p[2])
                  if len(_p) == 3 else DATE)
-        want = (f"announcements_{DATE}.mp4" if is_video
+        want = (announcement_cloud_filename(DATE, "mp4") if is_video
                 else os.path.basename(section_path(section, DATE) or ""))
         ext = ".mp4" if is_video else ".pptx"
         # Past Sundays are moved into the `_Archive` subfolder: search there too.
@@ -559,6 +699,11 @@ def _odrive_panel(section, label, is_video=False):
                 if l == want or l.startswith(want + "（"):
                     default_i = i
                     break
+        if default_i is None and is_video:
+            for i, l in enumerate(labels):
+                if l.split("（", 1)[0].casefold() == want.casefold():
+                    default_i = i
+                    break
         if default_i is None:
             variants = onedrive._date_variants(DATE)
             for i, l in enumerate(labels):
@@ -594,7 +739,7 @@ def _odrive_panel(section, label, is_video=False):
                 return
             try:
                 if is_video:
-                    name = _od_fetch_video(cfg, picked)
+                    name = _od_fetch_video(cfg, picked, date=DATE)
                 else:
                     name = _od_fetch_section(section, DATE, cfg, picked)
             except Exception as exc:
@@ -743,6 +888,7 @@ def persist_uploads(date, uploads):
             st.session_state[f"{date}::build_{wkey}_name"] = \
                 getattr(up, "name", "") or ""
             save_upload_name(sec, date, getattr(up, "name", "") or "")
+            clear_upload_source(sec, date)
             _log_action("上載 " + sec, getattr(up, "name", "") or "")
 
 
@@ -785,8 +931,9 @@ def _seed_hymns(week):
             "music": h.get("music", ""),
             "lyricist": h.get("lyricist", ""),
             "bg": h.get("bg", ""),
-            "text_color": h.get("text_color", ""),
-            "font_pt": h.get("font_pt"),
+            "font_size": h.get("font_size", week.get("hymn_font_max", 52)),
+            "text_color": h.get("text_color",
+                                week.get("hymn_text_color", "white")),
             "refrain": "\n".join(h.get("refrain") or []),
             "repeat": bool(h.get("refrain_after_every_verse", True)),
             "stanzas": ["\n".join(s) for s in h.get("verses", [])] or [""],
@@ -876,46 +1023,6 @@ def _draft_for(date):
     return st.session_state.setdefault(f"{date}::_draft", {})
 
 
-def _split_lyrics_damage(text):
-    """True when `text` looks like the legacy one-character-per-line damage.
-
-    An older seed joined a plain string character by character, so a poisoned
-    editor box (or an old session's draft) could hold each Chinese character on
-    its own line — `有` / `一` / `位` / `神`.  A real lyric line is never a
-    single character, so this fires when *most* non-empty lines are one CJK
-    character long.  The separator information is already lost in that shape, so
-    the caller replaces it with the clean stored value rather than guessing."""
-    nonempty = [ln.strip() for ln in str(text or "").split("\n") if ln.strip()]
-    if len(nonempty) < 4:
-        return False
-    one = [ln for ln in nonempty if len(ln) == 1]
-    if len(one) * 2 < len(nonempty):
-        return False
-    return any("\u4e00" <= ch <= "\u9fff" for ln in one for ch in ln)
-
-
-def _lapse_lyrics(key, draft, stored):
-    """`_lapse` for a lyric box, dropping the legacy character-split damage.
-
-    A session that ran the old seed can still carry the damaged text in its
-    draft (or live widget key).  When that text is the split shape and the store
-    holds real lyric lines, the store is the trustworthy one: the damaged value
-    is discarded so the box re-seeds from the sheet.  With nothing clean to fall
-    back on, the value is left as-is (a user may be mid-edit)."""
-    def damaged(v):
-        return bool(v) and _split_lyrics_damage(v)
-
-    if damaged(draft.get(key)) and str(stored or "").strip() \
-            and not _split_lyrics_damage(stored):
-        draft.pop(key, None)
-        st.session_state.pop(key, None)
-    elif damaged(st.session_state.get(key)) and str(stored or "").strip() \
-            and not _split_lyrics_damage(stored):
-        st.session_state.pop(key, None)   # damaged value yields to the store
-        draft.pop(key, None)
-    _lapse(key, draft, stored)
-
-
 def _lapse(key, draft, stored):
     """Keep one editor field's value alive across the step it is rendered on.
 
@@ -965,12 +1072,12 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "music", draft, sw.get("music", ""))
         _lapse(base + "lyricist", draft, sw.get("lyricist", ""))
         _lapse(base + "bg", draft, sw.get("bg", ""))
-        _lapse(base + "text_color", draft, sw.get("text_color", ""))
-        _lapse(base + "font_pt", draft, sw.get("font_pt"))
+        _lapse(base + "font_size", draft, h.get("font_size", 52))
+        _lapse(base + "text_color", draft, h.get("text_color", "white"))
         _lapse(base + "refrain", draft, "\n".join(sw.get("refrain") or []))
         _lapse(base + "repeat", draft,
                bool(sw.get("refrain_after_every_verse", True)))
-        _lapse_lyrics(base + "paste", draft, _stanzas_to_text(sw.get("verses", [])))
+        _lapse(base + "paste", draft, _stanzas_to_text(sw.get("verses", [])))
     slides = (week.get("sermon") or {}).get("slides") or []
     for i, s in enumerate(st.session_state.get(f"{date}::ui_slides") or []):
         sw = slides[i] if i < len(slides) else {}
@@ -978,7 +1085,7 @@ def _restore_lapsed_fields(date, week):
         _lapse(base + "title", draft, sw.get("title", ""))
         _lapse(base + "body", draft, "\n".join(sw.get("body") or []))
     rverses = (week.get("response") or {}).get("verses") or []
-    _lapse_lyrics(f"{date}::resp_paste", draft, _stanzas_to_text(rverses))
+    _lapse(f"{date}::resp_paste", draft, _stanzas_to_text(rverses))
 
 
 def _slide_blocks(text):
@@ -1002,20 +1109,10 @@ def _slide_blocks(text):
 
 
 def _stanzas_to_text(stanzas):
-    """Stored 段 list -> the editor's blank-line separated text, so the box and
-    the stored week round-trip without loss.
-
-    Each 段 may arrive either as a list of lines (the stored week's shape) or
-    already newline-joined into one string (the `ui_hymns` seed's shape).  Only
-    the list form is joined here; a string is kept whole — joining it would
-    iterate it character by character and write one Chinese word per line."""
-    def block(s):
-        if isinstance(s, str):
-            return s.rstrip()
-        return "\n".join(s).rstrip()
-
-    filled = [b for b in (block(s) for s in (stanzas or []) if s)
-              if b.strip()]
+    """Stored 段 list (list of line-lists) -> the editor's blank-line separated
+    text, so the box and the stored week round-trip without loss."""
+    filled = ["\n".join(s) for s in (stanzas or [])
+              if s and any((ln or "").strip() for ln in s)]
     return "\n\n".join(filled)
 
 
@@ -1029,33 +1126,9 @@ def _seed_response_fields(date, week):
         _stanzas_to_text(response.get("verses") or []))
 
 
-def _hymns_untouched_default(date):
-    """True when this session's 詩歌 list is still the blank 「（未命名）」 seed.
-
-    A session that seeded its hymns while the Google Sheet read was failing
-    keeps three empty hymns and never re-seeds (`ui_hymns` is only built when
-    the key is missing).  When every hymn has no title and no lyrics there is
-    nothing a user could have typed, so adopting the stored week is safe — any
-    real edit, even a single title, makes this False."""
-    hymns = st.session_state.get(f"{date}::ui_hymns")
-    if not hymns:
-        return False
-    for h in hymns:
-        if str(h.get("title") or "").strip():
-            return False
-        stanzas = [s for s in (h.get("stanzas") or []) if str(s).strip()]
-        if stanzas:
-            return False
-    return True
-
-
-@st.cache_data(show_spinner=False, max_entries=64, ttl=300)
+@st.cache_data(show_spinner=False, max_entries=64)
 def _cached_week(date):
-    """Current stored/default week for a date.
-
-    Invalidated explicitly on save; `ttl` also bounds how long a value can live
-    so a week cached while the sheet read was failing repairs itself instead of
-    pinning the blank default until the process restarts."""
+    """Current stored/default week for a date (cached; invalidated on save)."""
     return normalize_week(store.get(date) or default_week(date))
 
 
@@ -1066,12 +1139,6 @@ if f"{DATE}::ui_hymns" not in st.session_state:
     st.session_state[f"{DATE}::ui_ann"] = _seed_ann(week)
     _seed_fields(DATE, week)
     _seed_response_fields(DATE, week)
-elif _hymns_untouched_default(DATE) and (week.get("hymns") or []):
-    # This session seeded 詩歌 while the sheet read was failing, leaving the
-    # blank 「（未命名）」 defaults the user is now staring at. The stored week
-    # has real hymns and nothing has been typed, so adopt them. A session with
-    # any edit is left strictly alone.
-    st.session_state[f"{DATE}::ui_hymns"] = _seed_hymns(week)
     # Pre-seed the per-hymn scalar widget keys so their values survive the
     # wizard stepping away from the hymns step and back (widgets re-render
     # with these as their session values).
@@ -1084,8 +1151,8 @@ elif _hymns_untouched_default(DATE) and (week.get("hymns") or []):
         st.session_state[base + "music"] = h.get("music", "")
         st.session_state[base + "lyricist"] = h.get("lyricist", "")
         st.session_state[base + "bg"] = h.get("bg", "")
-        st.session_state[base + "text_color"] = h.get("text_color", "")
-        st.session_state[base + "font_pt"] = h.get("font_pt")
+        st.session_state[base + "font_size"] = h.get("font_size", 52)
+        st.session_state[base + "text_color"] = h.get("text_color", "white")
         st.session_state[base + "refrain"] = h.get("refrain", "")
         st.session_state[base + "repeat"] = bool(h.get("repeat", True))
         st.session_state[base + "paste"] = _stanzas_to_text(
@@ -1110,6 +1177,7 @@ for _sec in _SECTION_KEYS:
         st.session_state.pop(f"{DATE}::clear_{_sec}", None)
         clear_section_deck(_sec, DATE)
         clear_upload_name(_sec, DATE)
+        clear_upload_source(_sec, DATE)
         _cleared = True
 if st.session_state.get(f"{DATE}::clear_video"):
     st.session_state.pop(f"{DATE}::clear_video", None)
@@ -1259,9 +1327,10 @@ def assemble_hymn(date, ui):
         "lyricist": st.session_state.get(base + "lyricist",
                                         ui.get("lyricist", "")),
         "bg": st.session_state.get(base + "bg", ui.get("bg", "")),
-        "text_color": st.session_state.get(base + "text_color",
-                                           ui.get("text_color", "")),
-        "font_pt": st.session_state.get(base + "font_pt", ui.get("font_pt")),
+        "font_size": int(st.session_state.get(
+            base + "font_size", ui.get("font_size", 52)) or 52),
+        "text_color": str(st.session_state.get(
+            base + "text_color", ui.get("text_color", "white")) or "white"),
         "refrain": None,
         "refrain_after_every_verse": False,
         "verses": [split_lines(b) for b in _slide_blocks(paste)],
@@ -1361,9 +1430,6 @@ def _focus_hymn(uid, uids):
     """
     for u in uids:
         st.session_state[K(f"hymn_exp_{u}")] = (u == uid)
-    # Ask `_jump_to_hymn_edit` (end of the step body) to scroll the lyric
-    # editor into view once the panel has re-rendered open.
-    st.session_state[K("_focus_hymn_uid")] = uid
     h = next((x for x in _get_ui("hymns") if x.get("_id") == uid), None)
     name = (_song_title(uid, h) if h is not None else "") or "（未命名）"
     st.toast(f"已展開：{name}")
@@ -1488,7 +1554,7 @@ def _lyric_search_panel(uid_kind, uid):
     except Exception as exc:                       # unreadable library
         st.warning(f"歌詞庫無法載入：{exc}")
         return
-    with st.expander("🔍 歌詞庫搜尋", key=K(f"{base}ly_exp")):
+    with st.expander("🔍 歌詞庫搜尋"):
         if not len(lib):
             st.info(f"歌詞庫是空的（預期在 `lyrics/*/{lyric_search.CACHE_DIRNAME}/`）。")
             return
@@ -1497,16 +1563,8 @@ def _lyric_search_panel(uid_kind, uid):
                    f"{'、'.join(books)}。"
                    "空格分開多個詞＝同一頁要全部找到；忽略標點與空格，"
                    "所以跨行、跨頁的句子也找得到。")
-        # A form so the search runs on one action: press Enter in the box, or
-        # tap 「🔍 搜尋」. The button matters on phones — with a Chinese IME the
-        # first Enter only commits the typed characters, so relying on Enter
-        # alone made the search look like it needed two presses. A form also
-        # stops the whole page re-running on every keystroke.
-        with st.form(f"{base}lyform", clear_on_submit=False, border=False):
-            q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
-                              placeholder="例如 中國啊　或　讓我們 愛")
-            st.form_submit_button("🔍 搜尋", type="primary",
-                                  use_container_width=True)
+        q = st.text_input("搜尋歌詞", key=K(f"{base}lyq"),
+                          placeholder="例如 中國啊　或　讓我們 愛")
         q = (q or "").strip()
         if not q:
             return
@@ -1708,6 +1766,13 @@ div[data-testid="stExpander"] > details[open] > summary
 .steps .step.active { background:var(--accent); color:#fff;
   box-shadow:0 5px 14px rgba(63,91,139,.3); }
 .steps .step.wait { opacity:.75; }
+.st-key-stepnav [data-testid="stHorizontalBlock"] {
+  flex-wrap:wrap; gap:.4rem; }
+.st-key-stepnav [data-testid="stColumn"] {
+  flex:1 1 6rem; min-width:6rem; }
+@media (max-width: 640px) {
+  .stButton > button, .stDownloadButton > button { min-height:2.7rem; }
+}
 /* Section demo GIF inside the 操作示範 dialog: a roomy modal that still
    never spills off a laptop screen. */
 div[role="dialog"] { width: min(1040px, 94vw) !important;
@@ -1716,34 +1781,6 @@ div[role="dialog"] img, div[data-testid="stModal"] img {
   display:block; margin:0 auto;
   width:auto !important; height:auto !important;
   max-width:100%; max-height:calc(100vh - 210px); }
-
-/* --- Responsive trimming ------------------------------------------------
-   The step nav is a 9-column st.columns row and the background picker a
-   10-column one.  Streamlit keeps them side-by-side and squeezes below
-   ~1,300px (the step buttons collapse to ~48px on a 1024 laptop) and only
-   stacks full-width on phones.  Let those two rows size to their content and
-   wrap instead: one row on a wide desktop, a few per row on a tablet, and a
-   sensible grid on a phone.  Scoped to the keyed containers so every other
-   st.columns row is untouched. */
-.st-key-stepnav [data-testid="stHorizontalBlock"],
-[class*="st-key-bgpick_"] [data-testid="stHorizontalBlock"] {
-  flex-wrap:wrap; gap:.4rem; }
-.st-key-stepnav [data-testid="stColumn"] {
-  flex:1 1 6rem; min-width:6rem; }
-[class*="st-key-bgpick_"] [data-testid="stColumn"] {
-  flex:0 0 5.5rem; min-width:5.5rem; max-width:5.5rem; }
-
-@media (max-width: 640px) {
-  .block-container { padding-top:1rem; padding-bottom:2rem; }
-  .hero { padding:1.1rem 1.2rem; }
-  .hero-date { font-size:1.4rem; }
-  .hero-sm .hero-date { font-size:1.2rem; }
-  .sec-head { flex-wrap:wrap; }
-  div[role="dialog"] { width:96vw !important; max-width:96vw; }
-  [role="radiogroup"] { flex-wrap:wrap; row-gap:.4rem; }
-  /* Comfortable tap targets (Streamlit's default is ~40px). */
-  .stButton > button, .stDownloadButton > button { min-height:2.7rem; }
-}
 </style>
 """
 
@@ -1836,6 +1873,18 @@ def _fetch_into(ref_key, target_key, section=None):
             st.session_state[info_key] = ""
 
 
+def _fetch_worship_scripture(date, target_key, status_key):
+    """Load this date's reading from Worship_Link into the scripture editor."""
+    try:
+        text = worship_link.fetch_scripture(st_secrets, date)
+    except Exception as exc:
+        st.session_state[status_key] = ("error", f"Worship_Link 載入失敗：{exc}")
+        return
+    st.session_state[target_key] = text
+    st.session_state[status_key] = (
+        "success", f"已從 Worship_Link 載入 {date} 讀經經文")
+
+
 def _pick_book(select_key, ref_key):
     """Book dropdown callback: append the picked book's FHL abbreviation to the
     出處 field (multi-book entry), separated by `；` from any existing text."""
@@ -1917,22 +1966,20 @@ def _layout_radio(key):
 
 
 def _song_font_options(cur):
-    """歌詞字級選項：60pt（上限）遞減至 48pt，預設 52pt。舊週次存有範圍外的
+    """歌詞字級選項：52pt（預設，置頂）往下遞減至 48pt。舊週次存有範圍外的
     數值時一併補進，避免 selectbox 因值不在清單而報錯。"""
-    opts = list(range(60, 47, -1))          # 60, 59 … 49, 48
-    try:
-        if int(cur) not in opts:
-            opts.append(int(cur))
-    except (TypeError, ValueError):
-        pass
+    opts = list(range(52, 47, -1))          # 52, 51, 50, 49, 48
+    if cur not in opts:
+        opts.append(int(cur))
     return opts
 
 
-def _song_font_selector(label, hint=None):
+def _song_font_selector(label, hint=None, state_key="hymn_font_max",
+                        current=None):
     """歌詞字級下拉（見 _song_font_options 的選項），label 與下拉同一行並緊貼。
     若舊週次存有範圍外的數值，自動補進選項，避免 selectbox 因值不在清單而報錯。
     """
-    cur = int(sv("hymn_font_max", 52) or 52)
+    cur = int(sv(state_key, current if current is not None else 52) or 52)
     options = _song_font_options(cur)
     c1, c2, _ = st.columns([1.3, 0.9, 5], vertical_alignment="center")
     c1.markdown(f"**{label}**")
@@ -1941,17 +1988,19 @@ def _song_font_selector(label, hint=None):
         options=options,
         index=options.index(cur),
         format_func=lambda v: f"{v} pt",
-        key=K("hymn_font_max"),
+        key=K(state_key),
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
 
 
-def _song_color_selector(hint=None):
+def _song_color_selector(hint=None, state_key="hymn_text_color",
+                         current=None):
     """歌詞文字顏色：白字＋黑陰影（適合深色背景）或黑字＋白陰影（適合淺色背景）。
-    排版與字級選擇器一致；舊週次若無此設定則預設白字。詩歌敬拜／詩歌回應共用。"""
+    排版與字級選擇器一致；舊週次若無此設定則預設白字。"""
     opts = ["white", "black"]
-    cur = str(sv("hymn_text_color", "white") or "white")
+    cur = str(sv(state_key, current if current is not None else "white")
+              or "white")
     if cur not in opts:
         cur = "white"
     c1, c2, _ = st.columns([1.3, 1.7, 4.0], vertical_alignment="center")
@@ -1962,51 +2011,10 @@ def _song_color_selector(hint=None):
         index=opts.index(cur),
         format_func=lambda v: ("白字＋黑陰影（適合深色背景）" if v == "white"
                                else "黑字＋白陰影（適合淺色背景）"),
-        key=K("hymn_text_color"),
+        key=K(state_key),
         label_visibility="collapsed")
     if hint:
         st.caption(hint)
-
-
-def _hymn_style_controls(uid, h):
-    """一首詩歌專屬的歌詞文字顏色與歌詞字級（pt）——放在該首的「詩歌 N」編輯區裡。
-
-    兩者都提供「預設」：沿用上方全場的 hymn_text_color（白字／黑字）與
-    hymn_font_max（48–60pt、預設 52pt）。選了具體值便只套用這首詩歌，
-    由 generate_deck.build_hymns_section 讀 hymn["text_color"]／["font_pt"]。"""
-    color_opts = ["", "white", "black"]
-    cur_color = str(sv(f"hymn_{uid}_text_color", h.get("text_color", "")) or "")
-    if cur_color not in color_opts:
-        cur_color = ""
-    size_opts = [None] + list(range(60, 47, -1))
-    cur_size = sv(f"hymn_{uid}_font_pt", h.get("font_pt"))
-    if cur_size is not None:
-        try:
-            cur_size = int(cur_size)
-        except (TypeError, ValueError):
-            cur_size = None
-        if cur_size not in size_opts:
-            size_opts.append(cur_size)
-    c1, c2 = st.columns([1.6, 1.0], vertical_alignment="center")
-    with c1:
-        st.selectbox(
-            "歌詞文字顏色",
-            options=color_opts,
-            index=color_opts.index(cur_color),
-            format_func=lambda v: ("預設（跟隨全場）" if not v
-                                   else "白字＋黑陰影（適合深色背景）" if v == "white"
-                                   else "黑字＋白陰影（適合淺色背景）"),
-            key=K(f"hymn_{uid}_text_color"),
-            help="只套用這一首；「預設」跟隨上方的全場設定（白字＋黑陰影）。")
-    with c2:
-        st.selectbox(
-            "歌詞字級（pt）",
-            options=size_opts,
-            index=size_opts.index(cur_size),
-            format_func=lambda v: "預設" if v is None else f"{v} pt",
-            key=K(f"hymn_{uid}_font_pt"),
-            help="只套用這一首；「預設」跟隨上方的全場設定（52pt），"
-                 "可選 48–60pt。")
 
 
 def _strip_ref_note(ref):
@@ -2175,6 +2183,7 @@ def render_video_panel(ns="", num="D",
         vid = video_mp4.getvalue()
         st.session_state[K("video_data")] = vid
         save_video_mp4(DATE, vid)
+        clear_video_source(DATE)
         _video_result_tail(
             ns, vid, f"announcements_{DATE}.mp4",
             f"✅ 已採用你上載的 PowerPoint MP4（約 {len(vid) / 1048576:.1f} MB）。")
@@ -2212,6 +2221,7 @@ def render_video_panel(ns="", num="D",
                 bar.progress(1.0, text="MP4 已產製完成")
                 st.session_state[K("video_data")] = data
                 save_video_mp4(DATE, data)
+                clear_video_source(DATE)
         vid = st.session_state.get(K("video_data")) or _saved_mp4_bytes(DATE)
         if vid:
             _video_result_tail(
@@ -2243,8 +2253,6 @@ def _step_marker(step):
     st.progress(step / len(EDIT_STEPS),
                 text=f"第 {step} / {len(EDIT_STEPS)} 步驟 · "
                      f"{EDIT_STEPS[step - 1][0]}")
-    # `stepnav` is a CSS hook (see _CSS): the row stays one line on a wide
-    # desktop, but the buttons wrap by content width on a phone/small laptop.
     with st.container(key="stepnav"):
         cols = st.columns(len(EDIT_STEPS))
         for i, (_title, short) in enumerate(EDIT_STEPS):
@@ -2259,42 +2267,14 @@ def _step_marker(step):
 
 
 def _jump_to_section(step):
-    """Scroll the main pane to the top of the picked step's content.
-
-    Streamlit restores the browser scroll offset across a rerun, so clicking a
-    step button swaps the content below the step list but the viewport can stay
-    where it was — with nine full-width buttons on a phone the selected section
-    can even start off-screen, so the click looks like it did nothing.  A
-    one-shot scroll on an actual step change makes the button feel like it
-    navigated.  Runs at the end of the step body, once the target exists.
-    """
-    prev = st.session_state.get(K("_shown_step"))
+    """Scroll to the selected section after its content has rerendered."""
+    previous = st.session_state.get(K("_shown_step"))
     st.session_state[K("_shown_step")] = step
-    if prev is None or prev == step:
+    if previous is None or previous == step:
         return
     components.html(
         "<script>try{var t=window.parent.document"
         ".getElementById('step-top');"
-        "if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}"
-        "catch(e){}</script>",
-        height=0)
-
-
-def _jump_to_hymn_edit():
-    """Summary-card 「前往編輯」: scroll the song's 歌詞編輯 box into view.
-
-    `_focus_hymn` opens the right expander (before the rerun) and stashes the
-    uid; the expander body then renders an anchor at the lyric editor and this
-    emits the one-shot scroll at the end of the step body, once the anchor is
-    in the DOM.  Without it the panel opens but the viewport stays on the
-    summary strip.
-    """
-    uid = st.session_state.pop(K("_focus_hymn_uid"), None)
-    if not uid:
-        return
-    components.html(
-        "<script>try{var t=window.parent.document"
-        ".getElementById('hymn-edit-top');"
         "if(t)t.scrollIntoView({behavior:'smooth',block:'start'});}"
         "catch(e){}</script>",
         height=0)
@@ -2461,6 +2441,9 @@ def _sanity_check_scripture(week, deck=None):
 
 
 _PAGE_LABEL_RE = re.compile(r"^(\d+)/(\d+)$")
+_HYMN_TITLE_RE = re.compile(
+    r"(?:聖詩|美樂頌|Hymn(?:al)?)\s*#?\s*\d+",
+    re.IGNORECASE)
 
 # Section headers that may sit atop an imported song deck (獻詩／回應) — treated
 # as headers, not songs, by the slide-count check.  generate_deck only
@@ -2497,6 +2480,11 @@ def _sanity_is_divider(lines):
     return joined in _SANITY_DIVIDERS
 
 
+def _sanity_is_hymn_title(lines):
+    """Imported hymn title cards often include a hymnal name and number."""
+    return any(_HYMN_TITLE_RE.search(line) for line in lines)
+
+
 def _sanity_song_groups(infos):
     """[(slides, title)] splitting a song section deck into songs, where
     `slides` is that song's slide infos (its title card first).
@@ -2521,6 +2509,22 @@ def _sanity_song_groups(infos):
         if cur is not None:
             groups.append(cur)
         return [(sl, t) for sl, t in groups]
+
+    # Imported decks may repeat title/composer placeholders on lyric slides,
+    # which makes font-size heuristics mistake lyrics for title cards. A
+    # printed hymn-book number is a reliable marker for the actual title card.
+    title_cards = [
+        i for i, slide in enumerate(infos)
+        if _sanity_is_hymn_title(slide["lines"])
+        and not _sanity_is_divider(slide["lines"])
+    ]
+    if title_cards:
+        groups = []
+        for k, start in enumerate(title_cards):
+            end = title_cards[k + 1] if k + 1 < len(title_cards) else len(infos)
+            groups.append((infos[start:end],
+                           _sanity_card_title(infos[start]["lines"])))
+        return groups
 
     # No page labels → imported deck: split on font-size title cards.
     sizes = [s.get("maxsize") for s in infos if s.get("maxsize")]
@@ -2949,8 +2953,6 @@ def _scripture_editor(prefix, section=None):
                "詩篇 34:1-3")
     ref_text_key = K(f"{prefix}_ref")
     st.session_state.setdefault(ref_text_key, sv(f"{prefix}_ref"))
-    if section == "scripture":
-        _autofill_from_sheet(prefix)
     st.text_input("出處", key=ref_text_key,
                   placeholder="羅馬書 12:1-8")
     ver_key = K(f"{prefix}_version")
@@ -2991,46 +2993,21 @@ def _scripture_editor(prefix, section=None):
                "「列表」= 一節一行，分頁只在節與節之間。")
     verses_key = K(f"{prefix}_verses")
     st.session_state.setdefault(verses_key, sv(f"{prefix}_verses"))
+    if section == "scripture":
+        status_key = K("worship_link_status")
+        st.button(
+            "從主日事奉 Google sheet link自動填入讀經經文",
+            key=K("worship_link_load"),
+            on_click=_fetch_worship_scripture,
+            args=(DATE, verses_key, status_key),
+            use_container_width=True)
+        status = st.session_state.get(status_key)
+        if status:
+            kind, message = status
+            (st.success if kind == "success" else st.error)(message)
     st.text_area("內容（貼上全部經文，自動分頁）",
                  key=verses_key, height=200)
     _fetch_status(f"{prefix}_verses")
-
-
-def _autofill_from_sheet(prefix):
-    """Seed 出處 from the team's Google Sheet and fetch its verses.
-
-    Runs once per date (a session flag) and only when 出處 is empty, so a saved
-    week or anything typed by hand always wins.  The sheet's 經文 column holds a
-    passage reference (e.g. `與#3 約 1：40-51`); `scripture_sheet` drops the
-    series marker and this drops the cleaned reference into 出處 and runs the
-    usual fhl.net fetch into 內容 — the same result as pressing 從 fhl.net
-    聖經網輸入.  Any problem (sheet not shared, offline, no row, fetch failed)
-    is reported as a short caption and never blocks the page."""
-    flag = K("scripture_sheet_%s" % DATE)
-    if st.session_state.get(flag):
-        return
-    st.session_state[flag] = True
-    if str(sv(f"{prefix}_ref") or "").strip():
-        return                      # a saved week / typed 出處 wins
-    try:
-        ref = scripture_sheet.fetch_reference(DATE, st_secrets)
-    except Exception as exc:
-        st.caption("ℹ️ 無法自動帶入讀經經文：" + str(exc))
-        return
-    if not ref:
-        st.caption("ℹ️ 經文表沒有 %s 的經文出處，可自行輸入。" % DATE)
-        return
-    st.session_state[K(f"{prefix}_ref")] = ref
-    try:
-        text, info = bible.fetch_reference(ref)
-    except Exception as exc:
-        st.caption("ℹ️ 已從經文表帶入出處「%s」，但載入經文失敗：%s"
-                   % (ref, exc))
-        return
-    st.session_state[K(f"{prefix}_verses")] = text
-    st.session_state[K(f"{prefix}_verses__err")] = ""
-    st.session_state[K(f"{prefix}_verses__info")] = (
-        "已對照經文表「%s」自動載入：%s" % (ref, info))
 
 
 def _render_scr_flow():
@@ -3086,7 +3063,7 @@ def _render_scr_flow():
         st.download_button(
             "⬇️ 下載經文投影片 pptx",
             data=data,
-            file_name=f"scripture_{DATE}.pptx",
+            file_name=section_filename("scripture", DATE),
             mime="application/vnd.openxmlformats-officedocument"
                  ".presentationml.presentation",
         )
@@ -3131,6 +3108,8 @@ with st.sidebar:
                           index=idx if dates else 0)
     if dates and picked != DATE:
         set_active(picked)
+    if _auto_added_week:
+        st.caption(f"已自動新增下週主日 {_auto_added_week}；目前仍停留在本週。")
 
     if st.button("💾 儲存目前內容", use_container_width=True,
                  key=K("save_sidebar")):
@@ -3191,7 +3170,6 @@ with tab_edit:
 
     _step_marker(step)
     st.divider()
-    # Anchor for the step-change scroll (see `_jump_to_section`).
     st.markdown('<div id="step-top"></div>', unsafe_allow_html=True)
 
     if step == 1:
@@ -3200,7 +3178,7 @@ with tab_edit:
                            demo="psalm")
             _odrive_panel("psalm", "宣召經文")
             if not _cloud_deck_status("psalm", "宣召經文"):
-                st.caption("尚未讀取 `psalm_<日期>.pptx`；下方仍可直接貼上經文"
+                st.caption("尚未讀取 `宣召經文_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
             _scripture_editor("psalm", "psalm")
 
@@ -3209,24 +3187,13 @@ with tab_edit:
             section_header("2", "詩歌敬拜（Hymns）", demo="hymns")
             _odrive_panel("songs", "詩歌")
             section_deck_panel("songs", "hymns", "songs", "詩歌",
-                               f"songs_slides_{DATE}.pptx")
+                               section_filename("songs", DATE))
             if not _cloud_deck_status("songs", "詩歌", "build_songs"):
                 st.caption("以下內容以網頁內容現場編譯；上載 .pptx 時"
                            "以檔案為準，字型／項目符號沿用來源檔。")
             st.checkbox("歌詞文字加上陰影（有助背景圖上閱讀，寫入投影片）",
                         value=sv("hymn_text_shadow", True),
                         key=K("hymn_text_shadow"))
-            _song_color_selector(
-                hint="全部詩歌的**預設**顏色；個別詩歌可在其「詩歌 N」編輯區"
-                     "各自指定。")
-            _song_font_selector(
-                "歌詞字級（pt）",
-                hint="全部詩歌的預設字級（可選 48–60pt、預設 52pt），"
-                     "固定字級不隨行長縮小、行太長時自動換行；"
-                     "個別詩歌可在其「詩歌 N」編輯區選自己的字級。"
-                     "標點符號以空格取代（如「，」「。」→ 空白）。"
-                     "每首詩歌可用下方「背景圖」各自指定背景。")
-
             hymns_ui = _get_ui("hymns")
             hymn_uids = [h["_id"] for h in hymns_ui]
 
@@ -3272,18 +3239,20 @@ with tab_edit:
                 # stay constant: a live title/段數 here changes the widget id on
                 # every keystroke and Streamlit remounts the panel shut.  The
                 # live title/status go on the line inside and in the strip above.
-                if st.session_state.get(K("_focus_hymn_uid")) == uid:
-                    # Anchor for the 「前往編輯」 scroll (see _jump_to_hymn_edit):
-                    # land on the 詩歌 N header so the whole song panel is in
-                    # view.  Only the focused song renders it, so the id is unique.
-                    st.markdown('<div id="hymn-edit-top"></div>',
-                                unsafe_allow_html=True)
                 with st.expander(f"詩歌 {i + 1}", key=K(f"hymn_exp_{uid}"),
                                  on_change="rerun"):
                     st.caption(
                         f"{_song_title(uid, h) or '（未命名）'} · {badge}")
                     _lyric_search_panel("hymn", uid)
                     _lyric_editor("hymn", uid)
+                    _song_color_selector(
+                        state_key=f"hymn_{uid}_text_color",
+                        current=h.get("text_color", "white"))
+                    _song_font_selector(
+                        "歌詞字級（pt）",
+                        hint="固定字級，不隨行長縮小；行太長時自動換行。",
+                        state_key=f"hymn_{uid}_font_size",
+                        current=h.get("font_size", 52))
                     c1, c2 = st.columns(2)
                     c1.text_input("曲名",
                                   value=sv(f"hymn_{uid}_title", h.get("title")),
@@ -3303,12 +3272,10 @@ with tab_edit:
                                   value=sv(f"hymn_{uid}_lyricist",
                                            h.get("lyricist")),
                                   key=K(f"hymn_{uid}_lyricist"))
-                    _hymn_style_controls(uid, h)
-                    with st.expander("🎨 背景圖", key=K(f"{uid}_bg_exp")):
+                    with st.expander("🎨 背景圖"):
                         _bg_picker(f"hymn_{uid}_bg", h.get("bg", ""))
                     st.divider()
-                    with st.expander("▶ 預覽這首詩歌的 slides",
-                                     key=K(f"{uid}_pv_exp")):
+                    with st.expander("▶ 預覽這首詩歌的 slides"):
                         pcol1, pcol2 = st.columns([0.42, 0.58])
                         if pcol1.button("🎬 產生這首詩歌的 slide",
                                         key=K(f"hymn_{uid}_preview_gen"),
@@ -3343,7 +3310,9 @@ with tab_edit:
                 _add_item("hymns", {"_id": uuid.uuid4().hex[:8], "title": "",
                                     "subtitle": "", "source": "", "music": "",
                                     "lyricist": "", "bg": "",
-                                    "text_color": "", "font_pt": None,
+                                    "font_size": int(sv("hymn_font_max", 52)),
+                                    "text_color": str(
+                                        sv("hymn_text_color", "white")),
                                     "refrain": "", "repeat": True,
                                     "stanzas": [""]})
                 st.rerun()
@@ -3372,7 +3341,7 @@ with tab_edit:
                 st.download_button(
                     f"⬇️ 下載全部詩歌 .pptx（共 {_an} 頁）",
                     data=_all_bytes,
-                    file_name=f"songs_slides_{DATE}.pptx",
+                    file_name=section_filename("songs", DATE),
                     mime="application/vnd.openxmlformats-officedocument"
                          ".presentationml.presentation",
                     key=K("dl_all_songs_pptx"),
@@ -3394,7 +3363,7 @@ with tab_edit:
                            demo="scripture")
             _odrive_panel("scripture", "讀經經文")
             if not _cloud_deck_status("scripture", "讀經經文"):
-                st.caption("尚未讀取 `scripture_<日期>.pptx`；下方仍可直接貼上經文"
+                st.caption("尚未讀取 `讀經經文_<日期>.pptx`；下方仍可直接貼上經文"
                            "由網頁內容編譯。")
             _scripture_editor("scripture", "scripture")
 
@@ -3403,7 +3372,7 @@ with tab_edit:
             section_header("5", "講道信息（Sermon）", demo="sermon")
             _odrive_panel("sermon", "講道")
             section_deck_panel("sermon", "sermon", "sermon", "講道",
-                               f"sermon_{DATE}.pptx",
+                               section_filename("sermon", DATE),
                                btn="🗣 產生講道投影片")
             if not _cloud_deck_status("sermon", "講道", "build_sermon"):
                 st.info("此節以現成 .pptx 為準；上載後製成整場時以該檔案為準。"
@@ -3415,17 +3384,17 @@ with tab_edit:
                            "單首回應詩歌，緊接信息之後（可選）", demo="response")
             _odrive_panel("response", "詩歌回應")
             section_deck_panel("response", "response", "response", "詩歌回應",
-                               f"response_{DATE}.pptx")
+                               section_filename("response", DATE))
             if not _cloud_deck_status("response", "詩歌回應", "build_response"):
                 st.caption("此節**可選**：不需要可直接按「下一步」略過。"
                            "要加入時，可填寫以下內容現場編譯；"
                            "或在上方直接上載現成 .pptx 合併（以檔案為準）。")
             _song_color_selector(
-                hint="與「詩歌敬拜」的預設設定共用（白字＋黑陰影／黑字＋"
-                     "白陰影）。")
+                hint="此設定只套用於詩歌回應"
+                     "（白字＋黑陰影／黑字＋白陰影）。")
             _song_font_selector(
                 "歌詞字級（pt）",
-                hint="與「詩歌敬拜」的預設設定共用（48–60pt、預設 52pt）。")
+                hint="此設定只套用於詩歌回應（預設 52pt、可選 48–52pt）。")
             _lyric_search_panel("resp", "")
             for name in ("resp_title", "resp_subtitle", "resp_source",
                          "resp_music", "resp_lyricist", "resp_bg"):
@@ -3440,7 +3409,7 @@ with tab_edit:
             m2.text_input("曲", value=sv("resp_music"), key=K("resp_music"))
             m3.text_input("詞", value=sv("resp_lyricist"),
                           key=K("resp_lyricist"))
-            with st.expander("🎨 背景圖", key=K("resp_bg_exp")):
+            with st.expander("🎨 背景圖"):
                 _bg_picker("resp_bg", "")
 
             # 一次將 詩歌回應 編譯成「一份」.pptx 供下載（唯讀，不寫入
@@ -3466,7 +3435,7 @@ with tab_edit:
                 st.download_button(
                     f"⬇️ 下載詩歌回應 .pptx（共 {_rn} 頁）",
                     data=_rbytes,
-                    file_name=f"response_{DATE}.pptx",
+                    file_name=section_filename("response", DATE),
                     mime="application/vnd.openxmlformats-officedocument"
                          ".presentationml.presentation",
                     key=K("dl_response_pptx"),
@@ -3497,7 +3466,7 @@ with tab_edit:
             _odrive_panel("announcements", "家事分享")
             section_deck_panel("announcements", "announcements",
                                "announcements", "家事分享",
-                               f"announcements_{DATE}.pptx",
+                               section_filename("announcements", DATE),
                                btn="📋 產生家事分享投影片",
                                widget="ann")
             if not _cloud_deck_status("announcements", "家事分享", "build_ann"):
@@ -3513,7 +3482,6 @@ with tab_edit:
 
     st.divider()
     _jump_to_section(step)
-    _jump_to_hymn_edit()
     _step_nav(step)
     if step >= len(EDIT_STEPS):
         st.success("全部步驟已完成 ✔　在左側面板按「📽 製成整場投影片」，"
@@ -3536,6 +3504,9 @@ with tab_build:
         "offering": st.session_state.get(K("build_offering")),
         "response": st.session_state.get(K("build_response")),
     })
+    sharepoint_cfg = _od_config()
+    sharepoint_auto_status = _auto_load_sharepoint_sections(
+        DATE, sharepoint_cfg)
 
     ui_ann = _get_ui("ann")
     ann_images = {}
@@ -3558,6 +3529,56 @@ with tab_build:
             help="勾選：製成整場時，直接合併先前個別產生的各節 pptx 檔"
                  "（含已上載的檔案），不需要重新編譯。"
                  "取消：全部改用網頁上編輯的內容現場編譯。")
+        if sharepoint_cfg:
+            st.button(
+                "☁️ 重新檢查 SharePoint 投影片",
+                key=K("sharepoint_auto_retry"),
+                on_click=_retry_sharepoint_auto_load,
+                args=(DATE,),
+                help="重新檢查此日期的 SharePoint 資料夾，並把尚未儲存的各節投影片下載到本機。")
+        if "_error" in sharepoint_auto_status:
+            st.warning("SharePoint 自動載入失敗："
+                       + sharepoint_auto_status["_error"])
+        elif sharepoint_auto_status.get("_state") == "unconfigured":
+            st.caption("☁️ 尚未設定 SharePoint；不會自動載入投影片。")
+        else:
+            downloaded = sum(
+                item.get("state") == "downloaded"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            locally_saved = downloaded + sum(
+                item.get("state") == "already_saved"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            missing = sum(
+                item.get("state") == "missing"
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES and isinstance(item, dict))
+            st.caption(
+                f"☁️ SharePoint 自動檢查：本機已有 {locally_saved} 節"
+                f"（本次自動下載 {downloaded} 節）"
+                + (f"；{missing} 節找不到此日期的檔案。" if missing else "。"))
+            failures = [
+                (section, item)
+                for section, item in sharepoint_auto_status.items()
+                if section in SECTION_FILENAMES
+                and isinstance(item, dict) and item.get("state") == "error"]
+            for section, item in failures:
+                st.warning(
+                    f"{SECTION_FILENAMES[section].split('_', 1)[0]}："
+                    f"SharePoint 自動載入失敗 — {item['message']}")
+            video_status = sharepoint_auto_status.get("_video", {})
+            if video_status.get("state") == "downloaded":
+                st.caption(
+                    "🎞 家事MP4：已從 SharePoint 自動載入並儲存本機 "
+                    f"（{video_status['filename']}）。")
+            elif video_status.get("state") == "missing":
+                st.caption(
+                    "🎞 SharePoint 找不到家事MP4："
+                    f"`{announcement_cloud_filename(DATE, 'mp4')}`。")
+            elif video_status.get("state") == "error":
+                st.warning("🎞 家事MP4：SharePoint 自動載入失敗 — "
+                           + video_status["message"])
         def _row(label, sec, upload_key=None, fallback=None):
             """One 步驟狀態 line.  A section with a deck on disk is named by that
             deck — by the filename it was fetched/uploaded under, not the local
@@ -3613,9 +3634,22 @@ with tab_build:
             first_deck = st.session_state.get(K("video_first_deck_s9"))
             if first_deck is None:
                 first_deck = saved_video_meta(DATE)
+            video_source = saved_video_source(DATE)
+            source_note = ""
+            if video_source.get("source") == "sharepoint_auto":
+                source_note = (
+                    "，已由 SharePoint 自動載入並儲存本機"
+                    + (f"：**{video_source['name']}**"
+                       if video_source.get("name") else ""))
+            elif video_source.get("source") == "sharepoint":
+                source_note = (
+                    "，已從 SharePoint 讀取並儲存本機"
+                    + (f"：**{video_source['name']}**"
+                       if video_source.get("name") else ""))
             vid_text = ("✅ **🎞 家事MP4** — 已產生"
                         + ("，將併入第一頁" if bool(first_deck)
-                           else "，未併入第一頁"))
+                           else "，未併入第一頁")
+                        + source_note)
         else:
             vid_text = ("🧩 **🎞 家事MP4** — 未產製"
                         "（請到「編輯內容 → 家事MP4」填入內容並產製）")
@@ -3698,7 +3732,7 @@ with gen_slot:
                     st.warning("未產製 MP4，無法併入第一頁"
                                "（請先在「✏️ 編輯內容 → 家事MP4」產生影片）。")
             st.session_state["built_bytes"] = data
-            st.session_state["built_name"] = f"Sunday_Service_{DATE}.pptx"
+            st.session_state["built_name"] = f"SundayWorship_{DATE}.pptx"
             st.session_state["built_count"] = slide_count
             st.session_state["built_date"] = DATE
             if st.session_state.get("video_first_applied"):

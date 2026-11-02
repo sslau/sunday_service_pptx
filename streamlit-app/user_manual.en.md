@@ -48,8 +48,10 @@ From top to bottom:
 | 🔄 重新載入 Google Sheet (Reload) | Clear the cache and re-read the sheet now (use after editing the sheet by hand). |
 | 主日日期 (Service date) | Switch the Sunday being edited; the edit page follows the selection. |
 | 💾 儲存目前內容 (Save current content) | Save everything on the page back to the data store (Sheets/local JSON). |
-| 📽 製成整場投影片（合併＋編譯）(Generate full service) | Build the whole `Sunday_Service_<date>.pptx`; on success a "⬇️ 下載 PPTX" (Download) button appears below. |
+| 📽 製成整場投影片（合併＋編譯）(Generate full service) | Build the whole `SundayWorship_<date>.pptx`; on success a "⬇️ 下載 PPTX" (Download) button appears below. |
 | 📜 經文投影片（獨立流程）(Scripture-only, separate flow) | Open a one-step page that makes a scripture-only deck; its content is **not** saved to Sheets and is not part of the full-service flow. |
+
+> When the app is opened on a Sunday, it automatically adds the following Sunday's default week if missing, while keeping the current Sunday selected.
 
 > **Remember to click "💾 儲存目前內容".** While you type, edits live in the
 > browser session only; save before switching dates or logging back in. (Using
@@ -62,11 +64,14 @@ From top to bottom:
 1. Pick the **service date** on the left (or "＋ 新增週次" to add one).
 2. On the "✏️ 編輯內容" tab, fill the sections using the **nine step buttons**
    at the top (any order works).
-3. Where a section needs a ready-made sermon/announcements file, **upload the
-   `.pptx`** in that step (or fetch it from SharePoint).
-4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status).
+3. If SharePoint is configured, matching section `.pptx` files in the date
+   folder are downloaded and saved locally automatically. You can also upload a
+   file or choose one manually from SharePoint in its section.
+4. Go to the "📽 製作成投影片" tab and check "步驟狀態" (section status);
+   auto-loaded files are marked as saved locally from SharePoint.
 5. In the sidebar click "💾 儲存目前內容", then "📽 製成整場投影片".
-6. Click "⬇️ 下載 PPTX" to get `Sunday_Service_<date>.pptx`.
+6. Click "⬇️ 下載 PPTX" to get `SundayWorship_<date>.pptx`. Slides are
+   grouped into PowerPoint sections with Chinese names; empty sections are omitted.
 
 The animation below shows a real walkthrough: it steps through the nine
 wizard sections in order, then switches to the "📽 製作成投影片" tab
@@ -126,7 +131,7 @@ to all slide text.
 - **內容 (Content):** paste the whole passage in one box; the app **splits it
   across slides automatically** (section 7).
 - Top-right "🌐 從 SharePoint 讀取宣召經文投影片": with SharePoint configured, fetch
-  `psalm_<date>.pptx` to replace the compiled output.
+  `宣召經文_<date>.pptx` to replace the compiled output.
 
 ### Step 2 · Hymns (詩歌敬拜)
 
@@ -161,14 +166,15 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   thumbnail** to apply it (one per hymn; the first cell "依序" = the default
   `media/song_bg1…` order). You can also upload a new background, or drop an
   image into `media/` (named `song_bg*.jpg` and it appears in the strip).
-- **歌詞字級 (pt) (Lyric font size):** fixed size (**default 52pt**, 48–52pt
-  selectable; it does not shrink to fit; long lines wrap).
+- **歌詞字級 (pt) (Lyric font size):** set separately in each hymn's editor;
+  fixed size (default 52pt, 48–52pt selectable; it does not shrink to fit;
+  long lines wrap).
 - **歌詞文字加上陰影 (Text shadow):** keeps lyrics readable over background
   images and is written into the deck (the shadow is now a bit thicker).
-- **歌詞文字顏色 (Text colour):** choose **white text + black shadow (for dark
-  backgrounds)** or **black text + white shadow (for light backgrounds)**; the
-  shadow automatically pairs with the opposite colour. This also applies to the
-  Response Hymn (both sections share the font size and text colour).
+- **歌詞文字顏色 (Text colour):** set separately in each hymn's editor; choose
+  **white text + black shadow (for dark backgrounds)** or **black text + white
+  shadow (for light backgrounds)**. The Response Hymn keeps its own font size
+  and text colour settings.
 - **▶ 預覽這首詩歌的 slides (Preview):** "🎬 產生這首詩歌的 slide" renders an
   inline preview of each page (text and sizes, title card included) and offers
   that hymn's own `.pptx` for download.
@@ -199,6 +205,9 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Identical controls to the Call to Worship (book dropdown, translation, fhl.net
   fetch, fonts, paragraph/list layout, auto-splitting); the reading is just
   usually longer.
+- Click "從主日事奉 Google sheet link自動填入讀經經文" to load the passage
+  for the selected Sunday from the worship-team sheet. You can edit it afterward;
+  use "儲存目前內容" to save changes.
 
 ### Step 5 · Sermon (講道信息)
 
@@ -208,7 +217,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
   → choose the week's file in the list (e.g. `sermons_20260920.pptx`) → then press
   ⚡ 從 SharePoint 讀取並儲存.
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `sermon_<date>.pptx` from SharePoint.
+  `講道信息_<date>.pptx` from SharePoint.
 - "🗣 產生講道投影片" compiles a standalone file from the page's sermon content
   (when the week already has any).
 
@@ -234,7 +243,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Ticking "聖餐" adds a **Communion + Apostles' Creed** pair after the sermon /
   response.
 - It is **pre-ticked on the month's first Sunday**.
-- If you fetch `communion_<date>.pptx` from SharePoint, it **replaces** the built-in
+- If you fetch `聖餐_<date>.pptx` from SharePoint, it **replaces** the built-in
   Communion + Creed pair (and is used even when the checkbox is off).
 
 ### Step 8 · Announcements (家事分享)
@@ -242,7 +251,7 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 ![Announcements UI demo](user_guide_assets/section_announcements.gif)
 
 - This section is **built from a ready-made `.pptx`**: upload it here, or fetch
-  `announcements_<date>.pptx` from SharePoint; "📋 產生家事分享投影片" compiles it
+  `家事分享_<date>.pptx` from SharePoint; "📋 產生家事分享投影片" compiles it
   from the page.
 - In the full deck, announcements sit after the doxology and benediction, second
   to last (the "closing" slide is last).
@@ -343,7 +352,7 @@ sidebar. On success you'll see "完成：N 頁" and a "⬇️ 下載 PPTX" butto
 
 ## 5. Full-deck slide order
 
-(After opening `Sunday_Service_<date>.pptx`; if the video is used it is placed
+(After opening `SundayWorship_<date>.pptx`; if the video is used it is placed
 first of all.)
 
 Fixed slides + sections:
@@ -370,7 +379,7 @@ relevant background settings).
 
 The sidebar "📜 開啟『經文投影片』獨立流程" opens a **one-step** page: choose the
 global font, enter a reference (fetchable from fhl.net) or paste the whole
-passage, then "📜 製成經文投影片 pptx" to download `scripture_<date>.pptx`.
+passage, then "📜 製成經文投影片 pptx" to download `讀經經文_<date>.pptx`.
 
 - Its content uses separate `scrflow_*` session keys and is **not** saved to
   Google Sheets.
@@ -400,10 +409,24 @@ client_secret / site_host / site_path / folder_path), each section's
 "🌐 從 SharePoint 讀取…投影片" panel lists that date's folder and downloads after
 you click "⚡ 從 SharePoint 讀取並儲存".
 
+- When a date is opened, section `.pptx` files whose filename contains the
+  Chinese or English section name followed later by the service date (with
+  optional words between) are downloaded and saved locally; existing local files
+  are not overwritten.
+- Sermon also accepts `sermon_*.pptx` in the selected date folder; if its name
+  includes a date, it must match the selected Sunday.
+- Announcements use `MMDD(報告).pptx` and `MMDD(報告).mp4` (for example,
+  `1101(報告).pptx` / `1101(報告).mp4`). Downloads keep these actual filenames
+  locally; a matching MP4 is downloaded automatically and shown in status.
+- The "製作成投影片" section status identifies auto-loaded SharePoint files
+  and their local copies. Use "☁️ 重新檢查 SharePoint 投影片" to retry.
 - Expected names are the section's canonical filenames (e.g.
-  `psalm_<date>.pptx`, `sermon_<date>.pptx`, `announcements_<date>.mp4`); folder
+  `宣召經文_<date>.pptx`, `講道信息_<date>.pptx`, `家事分享_<date>.pptx`,
+  `announcements_<date>.mp4`); folder
   and filenames may spell the date as `YYYY.MM.DD` / `YYYY-MM-DD` / `YYYYMMDD` /
   `YYYY.MMDD`.
+- For future Sundays, including the upcoming Sunday, the `YYYY.MM.DD` date
+  folder is preferred.
 - The announcements MP4 is searched across the whole folder tree (including
   subfolders).
 

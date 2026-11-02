@@ -1,6 +1,6 @@
 # Sunday Service Slides · Quick Start
 
-Browser tool: edit content, generate `Sunday_Service_<date>.pptx`. One page.
+Browser tool: edit content, generate `SundayWorship_<date>.pptx`. One page.
 
 ## 1. Pick the week
 Side panel → **Service date**. New week? **Add week**, enter `YYYY.MM.DD`,
@@ -31,7 +31,7 @@ Side panel → **Service date**. New week? **Add week**, enter `YYYY.MM.DD`,
 ## 4. Build
 Side panel → **Save current content**, then **Generate full service**, then
 **Download PPTX** (button appears under it). Output:
-`Sunday_Service_<date>.pptx`.
+`SundayWorship_<date>.pptx`.
 
 ## Good to know
 - Scripture auto-splits by font-derived capacity; **44pt minimum**; lines never

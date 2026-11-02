@@ -67,12 +67,13 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
 2. 在 Google Cloud Console 建立 Service Account，下載 JSON 金鑰；
    把金鑰欄位填入 `.streamlit/secrets.toml`（範例見
    `.streamlit/secrets.toml.example`）。
+   若要啟用讀經經文自動匯入，另設定 `[scripture_sheet]`（同工表 URL、
+   `Worship_Link` 工作表名稱、日期欄 `A`、經文欄 `C`），並將試算表分享給
+   service account（Viewer 即可）。
 3. 建立（或沿用）一個 Google 試算表，把它**分享給 service account 的 email**
    （權限 Editor）。試算表內會自動建立名為 `weeks` 的分頁
    （欄位：date | json | updatedAt）。
 4. `streamlit.community.cloud` → New app → 連接該 repo，選 `app.py`。
-   在 **Advanced settings** 選擇 **Python 3.12 或 3.13**（Community Cloud 預設
-   未必是最新的穩定版；本 app 已在 3.12 驗證，3.15 亦可執行但尚無必要）。
 5. Settings → Secrets：貼上 `.streamlit/secrets.toml` 的內容。
 6. **登入密碼**：編輯器在進入前有一道密碼鎖，**部署時必須設定**。在 Secrets
    貼上 `app_password = "你的密碼"`；未設定時，非本機（部署）開啟會被鎖住並
@@ -80,22 +81,6 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
    （`secrets.toml` 被 .gitignore 排除，密碼不會進 repo。）
 7. Deploy。App 的帳號／權限由 Community Cloud 控制（app 可設為 private，
    加上 `allowed_users` 或直接鎖給自己）。
-
-### 憑證信任庫（certifi）
-
-`requirements.txt` 固定了 `certifi>=2026.10.19`。這是 app 所有 HTTPS 連線
-（gspread、requests）的憑證信任庫；2026-10 的 eMudhra 中繼 CA 洩漏事件中，
-較舊的版本仍會接受被盜金鑰簽發的憑證，等於任何網站都可被冒充。**請勿放寬這個
-下限**，否則重新部署會拉回舊版並重新開啟漏洞。
-
-本機若仍看到憑證錯誤，升級自己的 venv 即可：
-
-```
-.venv/bin/python -m pip install -U "certifi>=2026.10.19"
-```
-
-注意：macOS 內建的 `curl`／`git` 使用系統 `/etc/ssl/cert.pem`，**不受**上述影響，
-必須靠 macOS 更新（系統設定 → 一般 → 軟體更新）修補。
 
 ## 使用流程
 
@@ -109,7 +94,7 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
   1. 四個可合併的獨立 pptx：**詩歌敬拜**、**講道信息**、**家事分享**、
      **獻詩**（可選）、**詩歌回應**（可選；未上載則以編輯內容編譯）。
   2. 每一節都可先「個別產生」成獨立 .pptx（在網頁編譯，例如只有歌詞時
-     直接產出 `songs_slides_<date>.pptx`），傳給其他同工或之後合併。
+     直接產出 `詩歌敬拜_<date>.pptx`），傳給其他同工或之後合併。
      - 「個別產生」的檔案會**自動儲存在 `data/decks/<date>/`**，之後同一天
        按「製成整場投影片」時會**自動沿用**，不必重新上載（可用「自動使用
        先前儲存／已產生的各節投影片」開關停用）。
@@ -118,14 +103,15 @@ Streamlit Community Cloud 的檔案系統是「暫時性」的——每次重啟
      - 合併會把該節**原封不動**搬入（連同它的版面／母片／佈景主題／圖片），
        所以字型、項目符號等**沿用來源檔格式**，亦不會令檔案損壞（PowerPoint
        不需修復）。
-     - 本機自行執行時，也可**輸入檔名**（如 `sermon_2026.09.20.pptx`），
+     - 本機自行執行時，也可**輸入檔名**（如 `講道信息_2026.09.20.pptx`），
        系統會從 app 資料夾、`data/downloads`、`~/Downloads` 找檔案合併；
        找不到會自動改用已儲存檔案或網頁內容並提示。
   4. 製成前會顯示**各節來源狀態**（✅ 上載／檔案、💾 已儲存、🧩 現場編譯）
      以及是否加入聖餐＋使徒信經。**當月第一主日**會預設勾選聖餐＋使徒信經。
   5. 「製成整場投影片」合併固定頁＋四大節（詩歌／獻詩／講道／家事分享，依序：
      宣召 → 詩歌 → 禱告主禱文 → **獻詩** → 讀經 → 講道 → **詩歌回應** →
-     聖餐 → 家事分享）→ 下載 `Sunday_Service_<date>.pptx`。
+     聖餐 → 家事分享）→ 下載 `SundayWorship_<date>.pptx`。檔案會按流程分組為
+     中文 PowerPoint 章節；沒有內容的章節會略過。
   6. 另可替換節目的背景圖片，或在製成時為「圖片型家事分享」附加圖片。
 
 已知取捨：上傳的圖片（例如「圖片型家事分享」）不回存試算表，重啟後需重新

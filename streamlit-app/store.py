@@ -112,16 +112,10 @@ class SheetsStore:
         self._cache = None          # (expires_at, {date: week})
 
     def _rows(self):
-        """Every row of the sheet, or None when the read failed.
-
-        A failure must be distinguishable from an empty sheet: if a transient
-        error came back as `[]` the caller would see "no saved weeks" and serve
-        a blank/default week, and caching that would hide the real data until
-        the process restarted. Callers treat None as "unknown, try again"."""
         try:
             return self.ws.get_all_values()
         except Exception:
-            return None
+            return []
 
     def refresh(self):
         """Drop the cached rows so the next read goes back to the sheet."""
@@ -137,13 +131,8 @@ class SheetsStore:
         now = time.monotonic()
         if not fresh and self._cache and self._cache[0] > now:
             return dict(self._cache[1])
-        rows = self._rows()
-        if rows is None:
-            # The read failed. Serve whatever was cached (possibly nothing) but
-            # do not store the outcome, so the next call retries the sheet
-            # instead of pinning an empty result for the whole TTL.
-            return dict(self._cache[1]) if self._cache else {}
         out = {}
+        rows = self._rows()
         for row in rows[1:]:
             if len(row) >= 2 and row[0] and row[1]:
                 try:

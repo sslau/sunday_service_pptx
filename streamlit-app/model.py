@@ -4,14 +4,12 @@
     {
       "date": "2026.09.20",
       "psalm":        {ref, ref_size, font_size, verses[]},
-      "hymn_font_max": 52,   # default lyric size (pt); UI 48–60, hard cap 60
+      "hymn_font_max": 52,   # legacy/default hymn size and response hymn size
       "hymn_font_min":  48,   # lyrics auto-fit floor — never smaller than 48pt
       "hymn_margin_in": 0.83,
       "call_font":      "DFKai-SB",   # global typeface for all text
-      "hymns": [ {title, subtitle, source, refrain[], refrain_after_every_verse,
-                  verses[ [line...], ... ],
-                  text_color,   # "white" | "black" | "" = follow hymn_text_color
-                  font_pt} ],   # 48–60 pt, or None = follow hymn_font_max
+      "hymns": [ {title, subtitle, source, font_size, text_color, refrain[],
+                  refrain_after_every_verse, verses[ [line...], ... ]} ],
       "scripture":    {ref, ref_size, font_size, max_lines, verses[]},
       "sermon":       {title, title_2, scripture, ref_size, speaker, date, slides[]},
       "response":     {title, subtitle, source, refrain[], refrain_after_every_verse,
@@ -120,34 +118,6 @@ def _num(value, default):
         return default
 
 
-# 詩歌敬拜的每首詩歌可各自指定歌詞字級與歌詞文字顏色（詩歌 N 編輯區）。兩者
-# 留空時沿用整場設定：hymn_font_max（預設 52pt、上限 60pt）與
-# hymn_text_color（預設 white）。
-HYMN_FONT_DEFAULT = 52
-HYMN_FONT_MIN = 48
-HYMN_FONT_MAX = 60
-
-
-def _font_pt(value):
-    """Per-song 歌詞字級 (pt) → an int in [48, 60], else None = follow the
-    week's hymn_font_max.  None/""/0/garbage all mean "not set"."""
-    if value is None or value == "":
-        return None
-    try:
-        n = int(round(float(value)))
-    except (TypeError, ValueError):
-        return None
-    if n <= 0:
-        return None
-    return max(HYMN_FONT_MIN, min(HYMN_FONT_MAX, n))
-
-
-def _text_color(value):
-    """Per-song 歌詞文字顏色 → "white" | "black" | "" (follow the week's)."""
-    s = str(value or "").strip().lower()
-    return s if s in ("white", "black") else ""
-
-
 # FHL's `rcuv` translation was once written as 和合本2010; the editor and slides
 # now call it 和修版.  Rewrite the legacy label inside stored 出處/經文 references
 # so weeks saved before the rename display correctly without a manual re-pick.
@@ -173,8 +143,7 @@ def normalize_week(w):
     psalm["layout"] = _reading_layout(psalm.get("layout"))
     w["psalm"] = psalm
 
-    w["hymn_font_max"] = max(HYMN_FONT_MIN, min(
-        HYMN_FONT_MAX, _num(w.get("hymn_font_max"), HYMN_FONT_DEFAULT)))
+    w["hymn_font_max"] = _num(w.get("hymn_font_max"), 52)
     w["hymn_font_min"] = _num(w.get("hymn_font_min"), 48)
     w["hymn_margin_in"] = float(w.get("hymn_margin_in") or 0.83)
     w["hymn_text_shadow"] = bool(w.get("hymn_text_shadow", True))
@@ -194,8 +163,10 @@ def normalize_week(w):
             "music": str(h.get("music") or ""),
             "lyricist": str(h.get("lyricist") or ""),
             "bg": str(h.get("bg") or ""),
-            "text_color": _text_color(h.get("text_color")),
-            "font_pt": _font_pt(h.get("font_pt")),
+            "font_size": _num(h.get("font_size"), w["hymn_font_max"]),
+            "text_color": ("black" if str(h.get("text_color")
+                                           or w["hymn_text_color"]).lower()
+                           == "black" else "white"),
             "refrain": (_stanza_lines(h.get("refrain")) or None),
             "refrain_after_every_verse": bool(h.get("refrain_after_every_verse", True)),
             "verses": [_stanza_lines(stanza)
