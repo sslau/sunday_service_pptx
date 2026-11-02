@@ -51,6 +51,8 @@ From top to bottom:
 | 📽 製成整場投影片（合併＋編譯）(Generate full service) | Build the whole `SundayWorship_<date>.pptx`; on success a "⬇️ 下載 PPTX" (Download) button appears below. |
 | 📜 經文投影片（獨立流程）(Scripture-only, separate flow) | Open a one-step page that makes a scripture-only deck; its content is **not** saved to Sheets and is not part of the full-service flow. |
 
+> When the app is opened on a Sunday, it automatically adds the following Sunday's default week if missing, while keeping the current Sunday selected.
+
 > **Remember to click "💾 儲存目前內容".** While you type, edits live in the
 > browser session only; save before switching dates or logging back in. (Using
 > "從 fhl.net 聖經網輸入" to fetch scripture auto-saves once.)

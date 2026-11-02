@@ -18,6 +18,7 @@ import re
 import tempfile
 import uuid
 import html
+from datetime import date as _date, timedelta
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -71,9 +72,25 @@ except Exception:
 
 store = get_store(st_secrets)
 
+_today = _date.today()
+
+
+def _initial_active_date(dates, today):
+    """Choose today's Sunday over an auto-created future week on fresh visits."""
+    dates = sorted(dates, reverse=True)
+    if today.weekday() == 6:
+        today_key = today.strftime("%Y.%m.%d")
+        if today_key in dates:
+            return today_key
+        previous_dates = [value for value in dates if value <= today_key]
+        if previous_dates:
+            return previous_dates[0]
+    return dates[0] if dates else "2026.09.20"
+
+
 if "active_date" not in st.session_state:
-    dates = sorted(store.all().keys(), reverse=True)
-    st.session_state["active_date"] = dates[0] if dates else "2026.09.20"
+    st.session_state["active_date"] = _initial_active_date(
+        store.all().keys(), _today)
 
 DATE = st.session_state["active_date"]
 P = f"{DATE}::"
@@ -213,6 +230,15 @@ if not _auth_ok():
             else:
                 st.error("密碼錯誤，請重試。")
         st.stop()
+
+
+_auto_added_week = None
+if _today.weekday() == 6:
+    _next_sunday = (_today + timedelta(days=7)).strftime("%Y.%m.%d")
+    if _next_sunday not in store.all():
+        store.save(default_week(_next_sunday))
+        st.cache_data.clear()
+        _auto_added_week = _next_sunday
 
 
 def song_bg_files():
@@ -3082,6 +3108,8 @@ with st.sidebar:
                           index=idx if dates else 0)
     if dates and picked != DATE:
         set_active(picked)
+    if _auto_added_week:
+        st.caption(f"已自動新增下週主日 {_auto_added_week}；目前仍停留在本週。")
 
     if st.button("💾 儲存目前內容", use_container_width=True,
                  key=K("save_sidebar")):
