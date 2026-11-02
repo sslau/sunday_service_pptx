@@ -90,3 +90,9 @@ def fetch_scripture(secrets, service_date):
         return text
 
     raise LookupError(f"Worship_Link 找不到 {service_date} 的讀經經文。")
+
+
+def scripture_reference(value):
+    """Remove a leading series label and item number from a sheet reference."""
+    text = str(value or "").strip()
+    return re.sub(r"^[^#\r\n]*#\d+\s+", "", text, count=1).strip()

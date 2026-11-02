@@ -1873,16 +1873,44 @@ def _fetch_into(ref_key, target_key, section=None):
             st.session_state[info_key] = ""
 
 
-def _fetch_worship_scripture(date, target_key, status_key):
-    """Load this date's reading from Worship_Link into the scripture editor."""
+def _fetch_worship_scripture(date, ref_key, target_key, status_key):
+    """Load this date's reference from Worship_Link and fetch it from fhl.net."""
+    st.session_state[f"{date}::worship_link_autofill_attempted"] = True
     try:
-        text = worship_link.fetch_scripture(st_secrets, date)
+        sheet_text = worship_link.fetch_scripture(st_secrets, date)
     except Exception as exc:
         st.session_state[status_key] = ("error", f"Worship_Link 載入失敗：{exc}")
         return
+    ref = worship_link.scripture_reference(sheet_text)
+    if not ref:
+        st.session_state[status_key] = (
+            "error", f"Worship_Link 的讀經經文格式無效：{sheet_text}")
+        return
+    st.session_state[ref_key] = ref
+    draft = _draft_for(date)
+    draft["scripture_ref"] = ref
+    try:
+        text, info = bible.fetch_reference(ref)
+    except Exception as exc:
+        st.session_state[status_key] = (
+            "error", f"已載入出處「{ref}」，但 fhl.net 載入經文失敗：{exc}")
+        return
     st.session_state[target_key] = text
+    st.session_state[target_key + "__err"] = ""
+    st.session_state[target_key + "__info"] = f"已從聖經網載入：{info}"
+    draft["scripture_verses"] = text
     st.session_state[status_key] = (
-        "success", f"已從 Worship_Link 載入 {date} 讀經經文")
+        "success", f"已載入 {date} 出處「{ref}」及 fhl.net 經文")
+
+
+def _autofill_worship_scripture(date, ref_key, target_key, status_key):
+    """Fetch once when opening the reading section, without replacing content."""
+    attempted_key = f"{date}::worship_link_autofill_attempted"
+    if attempted_key in st.session_state:
+        return
+    st.session_state[attempted_key] = True
+    if not str(st.session_state.get(target_key) or "").strip():
+        _fetch_worship_scripture(date, ref_key, target_key, status_key)
 
 
 def _pick_book(select_key, ref_key):
@@ -2942,6 +2970,14 @@ def _scripture_editor(prefix, section=None):
     經文投影片 flow. Field keys are `{prefix}_{field}`. With `section`
     ("scripture"), the fhl.net fetch also auto-saves to the store; the
     standalone flow passes section=None so nothing touches Google Sheets."""
+    if section == "scripture":
+        ref_key = K(f"{prefix}_ref")
+        verses_key = K(f"{prefix}_verses")
+        status_key = K("worship_link_status")
+        st.session_state.setdefault(ref_key, sv(f"{prefix}_ref"))
+        st.session_state.setdefault(verses_key, sv(f"{prefix}_verses"))
+        _autofill_worship_scripture(
+            DATE, ref_key, verses_key, status_key)
     st.selectbox("書卷", bible.BOOK_NAMES, index=None,
                  placeholder="選擇書卷（也可直接在下面輸入出處）",
                  format_func=lambda n: f"{n}（{bible.book_code(n)} / "
@@ -2996,10 +3032,10 @@ def _scripture_editor(prefix, section=None):
     if section == "scripture":
         status_key = K("worship_link_status")
         st.button(
-            "從主日事奉 Google sheet link自動填入讀經經文",
+            "重新從主日事奉 Google sheet link載入讀經經文",
             key=K("worship_link_load"),
             on_click=_fetch_worship_scripture,
-            args=(DATE, verses_key, status_key),
+            args=(DATE, ref_text_key, verses_key, status_key),
             use_container_width=True)
         status = st.session_state.get(status_key)
         if status:
