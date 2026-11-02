@@ -205,9 +205,13 @@ Add a stanza by leaving a blank line, delete one by clearing it.
 - Identical controls to the Call to Worship (book dropdown, translation, fhl.net
   fetch, fonts, paragraph/list layout, auto-splitting); the reading is just
   usually longer.
-- Click "從主日事奉 Google sheet link自動填入讀經經文" to load the passage
-  for the selected Sunday from the worship-team sheet. You can edit it afterward;
-  use "儲存目前內容" to save changes.
+- When you open this step with an empty passage field, the selected Sunday's
+  reference is read from the worship-team sheet, its leading series label and
+  number are removed (for example, "與#5 約 2:1-11" becomes "約 2:1-11"), and
+  the reference is entered in 出處. The passage is then fetched from fhl.net
+  into 內容. Existing passage text is not replaced automatically. Use
+  "重新從主日事奉 Google sheet link載入讀經經文" to reload manually; edit the
+  result as needed and use "儲存目前內容" to save.
 
 ### Step 5 · Sermon (講道信息)
 
